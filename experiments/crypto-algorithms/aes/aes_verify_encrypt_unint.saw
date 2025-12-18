@@ -1,0 +1,309 @@
+// AES-128 Full Encryption Verification with Uninterpreted Functions
+//
+// Uses the Galois approach: keep primitives uninterpreted during proofs to
+// dramatically reduce SMT complexity. Both C (via overrides) and Cryptol
+// (via unroll lemmas) produce the same abstract structure.
+//
+// Key insight: When both sides have identical abstract function application
+// patterns like f(g(h(x))), the solver can unify by reflexivity.
+
+m <- llvm_load_module "aes.bc";
+
+import "../../../specs/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/Instantiations/AES128.cry";
+
+print "=== AES-128 Verification with Uninterpreted Functions ===";
+print "";
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 1: Verify Primitives and Capture as Overrides
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 1: Verifying Primitives (capturing specs for overrides)";
+print "============================================================";
+print "";
+
+let state_type = llvm_array 4 (llvm_array 4 (llvm_int 8));
+
+// 1. SubBytes
+print "Verifying SubBytes...";
+let SubBytes_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ SubBytes state_in }});
+};
+SubBytes_ov <- llvm_verify m "SubBytes" [] false SubBytes_spec z3;
+print "   SubBytes: VERIFIED";
+
+// 2. InvSubBytes
+print "Verifying InvSubBytes...";
+let InvSubBytes_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ InvSubBytes state_in }});
+};
+InvSubBytes_ov <- llvm_verify m "InvSubBytes" [] false InvSubBytes_spec z3;
+print "   InvSubBytes: VERIFIED";
+
+// 3. ShiftRows
+print "Verifying ShiftRows...";
+let ShiftRows_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ ShiftRows state_in }});
+};
+ShiftRows_ov <- llvm_verify m "ShiftRows" [] false ShiftRows_spec z3;
+print "   ShiftRows: VERIFIED";
+
+// 4. InvShiftRows
+print "Verifying InvShiftRows...";
+let InvShiftRows_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ InvShiftRows state_in }});
+};
+InvShiftRows_ov <- llvm_verify m "InvShiftRows" [] false InvShiftRows_spec z3;
+print "   InvShiftRows: VERIFIED";
+
+// 5. MixColumns
+print "Verifying MixColumns...";
+let MixColumns_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ MixColumns state_in }});
+};
+MixColumns_ov <- llvm_verify m "MixColumns" [] false MixColumns_spec z3;
+print "   MixColumns: VERIFIED";
+
+// 6. InvMixColumns
+print "Verifying InvMixColumns...";
+let InvMixColumns_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ InvMixColumns state_in }});
+};
+InvMixColumns_ov <- llvm_verify m "InvMixColumns" [] false InvMixColumns_spec z3;
+print "   InvMixColumns: VERIFIED";
+
+// 7. AddRoundKey
+print "Verifying AddRoundKey...";
+let AddRoundKey_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    key_ptr <- llvm_alloc_readonly (llvm_array 4 (llvm_int 32));
+    key_in <- llvm_fresh_var "key_in" (llvm_array 4 (llvm_int 32));
+    llvm_points_to key_ptr (llvm_term key_in);
+
+    llvm_execute_func [state_ptr, key_ptr];
+
+    // C key format: [4][32] big-endian words -> Cryptol RoundKey: [4][4][8]
+    let cryptol_key = {{ transpose [ split w | w <- key_in ] }};
+    llvm_points_to state_ptr (llvm_term {{ AddRoundKey cryptol_key state_in }});
+};
+AddRoundKey_ov <- llvm_verify m "AddRoundKey" [] false AddRoundKey_spec z3;
+print "   AddRoundKey: VERIFIED";
+
+print "";
+print "All primitives verified and captured as overrides.";
+print "";
+
+// Collect all overrides
+let all_overrides = [SubBytes_ov, InvSubBytes_ov, ShiftRows_ov, InvShiftRows_ov,
+                     MixColumns_ov, InvMixColumns_ov, AddRoundKey_ov];
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 2: Prove Cipher Unroll Lemma (Cryptol-only proof)
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 2: Proving Cipher Unroll Lemma (AES-128: 10 rounds)";
+print "============================================================";
+print "";
+
+// This proves that the Cryptol `cipher` function can be unrolled to explicit
+// round applications. With primitives kept uninterpreted, this is fast.
+//
+// AES-128 structure (Nr=10):
+// - Initial: AddRoundKey w@0
+// - Rounds 1-9: SubBytes -> ShiftRows -> MixColumns -> AddRoundKey w@i
+// - Round 10: SubBytes -> ShiftRows -> AddRoundKey w@10 (no MixColumns)
+
+print "Proving cipher unrolls to 10 explicit rounds...";
+
+// Prove the unroll lemma
+// IMPORTANT: The ( before stateToMsg and ) after where wrap the entire where-expression.
+// See docs/saw-pitfalls.md for explanation of Cryptol where clause scoping.
+unroll_cipher_128 <- prove_print
+    (w4_unint_z3 ["AddRoundKey", "MixColumns", "SubBytes", "ShiftRows"])
+    {{ \w pt -> cipher w pt ==
+    (stateToMsg (AddRoundKey (w@10) (ShiftRows (SubBytes (t 9 (t 8 (t 7 (t 6 (t 5 (t 4 (t 3 (t 2 (t 1 (AddRoundKey (w@0) (msgToState pt))))))))))))))
+        where
+        t i state = AddRoundKey (w@i) (MixColumns (ShiftRows (SubBytes state))))
+    }};
+
+print "   Cipher unroll lemma: PROVED";
+print "";
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 3: Build Simpset with Proven Lemmas
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 3: Building Simpset with Unroll Lemma";
+print "============================================================";
+print "";
+
+let ss = cryptol_ss ();
+let ss_with_unroll = addsimps [unroll_cipher_128] ss;
+
+print "Simpset constructed with cipher unroll lemma.";
+print "";
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 4: Verify aes_encrypt with Uninterpreted Functions
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 4: Full AES-128 Encryption (using uninterpreted functions)";
+print "============================================================";
+print "";
+
+// The key insight: With overrides, C code produces Cryptol primitive calls.
+// With w4_unint_z3, these are kept abstract during SMT solving.
+// The simpset rewrites `cipher w pt` to the unrolled form.
+// Both sides have the same abstract structure -> Solver unifies by reflexivity.
+
+print "Verifying aes_encrypt with symbolic plaintext, NIST key...";
+print "Using: compositional overrides + w4_unint_z3 + unroll simpset";
+print "";
+
+let aes_encrypt_symbolic_pt_spec = do {
+    // Symbolic plaintext: 16 bytes (128 bits symbolic)
+    in_ptr <- llvm_alloc_readonly (llvm_array 16 (llvm_int 8));
+    plaintext <- llvm_fresh_var "plaintext" (llvm_array 16 (llvm_int 8));
+    llvm_points_to in_ptr (llvm_term plaintext);
+
+    // Output ciphertext: 16 bytes
+    out_ptr <- llvm_alloc (llvm_array 16 (llvm_int 8));
+
+    // Concrete key schedule from NIST test key
+    key_ptr <- llvm_alloc_readonly (llvm_array 44 (llvm_int 32));
+    let key_schedule = {{ keyExpansion 0x2b7e151628aed2a6abf7158809cf4f3c }};
+    let c_key_schedule = {{ join [ [ join col | col <- transpose rk ] | rk <- key_schedule ] }};
+    llvm_points_to key_ptr (llvm_term c_key_schedule);
+
+    // Keysize = 128
+    llvm_execute_func [in_ptr, out_ptr, key_ptr, llvm_term {{ 128 : [32] }}];
+
+    // Expected: cipher with NIST key schedule
+    let expected_ct = {{ cipher key_schedule (join plaintext) }};
+    llvm_points_to out_ptr (llvm_term {{ split`{16} expected_ct : [16][8] }});
+};
+
+// Verify using custom proof script with simpset and uninterpreted functions
+// NOTE: msgToState and stateToMsg are NOT uninterpreted - they need to be
+// evaluated so the solver can match C's byte extraction with Cryptol's join/transpose.
+llvm_verify m "aes_encrypt" all_overrides false aes_encrypt_symbolic_pt_spec
+    do {
+        simplify ss_with_unroll;
+        w4_unint_z3 ["SubBytes", "ShiftRows", "MixColumns", "AddRoundKey"];
+    };
+
+print "   aes_encrypt (symbolic plaintext): VERIFIED";
+print "";
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 5: Verify aes_decrypt with Uninterpreted Functions
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 5: Full AES-128 Decryption (using uninterpreted functions)";
+print "============================================================";
+print "";
+
+// First prove invCipher unroll lemma
+print "Proving invCipher unrolls to 10 explicit rounds...";
+
+// IMPORTANT: The ( before stateToMsg and ) after where wrap the entire where-expression.
+// See docs/saw-pitfalls.md for explanation of Cryptol where clause scoping.
+unroll_invCipher_128 <- prove_print
+    (w4_unint_z3 ["AddRoundKey", "InvMixColumns", "InvSubBytes", "InvShiftRows"])
+    {{ \w ct -> invCipher w ct ==
+    (stateToMsg (AddRoundKey (w@0) (InvSubBytes (InvShiftRows (t 1 (t 2 (t 3 (t 4 (t 5 (t 6 (t 7 (t 8 (t 9 (AddRoundKey (w@10) (msgToState ct))))))))))))))
+        where
+        t i state = InvMixColumns (AddRoundKey (w@i) (InvSubBytes (InvShiftRows state))))
+    }};
+
+print "   InvCipher unroll lemma: PROVED";
+print "";
+
+let ss_with_both = addsimps [unroll_cipher_128, unroll_invCipher_128] ss;
+
+print "Verifying aes_decrypt with symbolic ciphertext, NIST key...";
+
+let aes_decrypt_symbolic_ct_spec = do {
+    // Symbolic ciphertext: 16 bytes (128 bits symbolic)
+    in_ptr <- llvm_alloc_readonly (llvm_array 16 (llvm_int 8));
+    ciphertext <- llvm_fresh_var "ciphertext" (llvm_array 16 (llvm_int 8));
+    llvm_points_to in_ptr (llvm_term ciphertext);
+
+    // Output plaintext: 16 bytes
+    out_ptr <- llvm_alloc (llvm_array 16 (llvm_int 8));
+
+    // Concrete key schedule from NIST test key
+    key_ptr <- llvm_alloc_readonly (llvm_array 44 (llvm_int 32));
+    let key_schedule = {{ keyExpansion 0x2b7e151628aed2a6abf7158809cf4f3c }};
+    let c_key_schedule = {{ join [ [ join col | col <- transpose rk ] | rk <- key_schedule ] }};
+    llvm_points_to key_ptr (llvm_term c_key_schedule);
+
+    // Keysize = 128
+    llvm_execute_func [in_ptr, out_ptr, key_ptr, llvm_term {{ 128 : [32] }}];
+
+    // Expected: invCipher with NIST key schedule
+    let expected_pt = {{ invCipher key_schedule (join ciphertext) }};
+    llvm_points_to out_ptr (llvm_term {{ split`{16} expected_pt : [16][8] }});
+};
+
+llvm_verify m "aes_decrypt" all_overrides false aes_decrypt_symbolic_ct_spec
+    do {
+        simplify ss_with_both;
+        w4_unint_z3 ["InvSubBytes", "InvShiftRows", "InvMixColumns", "AddRoundKey"];
+    };
+
+print "   aes_decrypt (symbolic ciphertext): VERIFIED";
+print "";
+
+//////////////////////////////////////////////////////////////////////////////
+// Summary
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "=== ALL VERIFICATIONS COMPLETE ===";
+print "============================================================";
+print "";
+print "Verified with uninterpreted functions:";
+print "  - Primitives: SubBytes, InvSubBytes, ShiftRows, InvShiftRows,";
+print "                MixColumns, InvMixColumns, AddRoundKey";
+print "  - aes_encrypt: 128 bits symbolic plaintext (concrete NIST key)";
+print "  - aes_decrypt: 128 bits symbolic ciphertext (concrete NIST key)";
+print "";
+print "Key techniques used:";
+print "  - Compositional verification (overrides)";
+print "  - Cipher unroll lemmas (explicit round structure)";
+print "  - Uninterpreted functions (w4_unint_z3 in proof scripts)";
+print "  - Simpsets for term rewriting";
+print "";

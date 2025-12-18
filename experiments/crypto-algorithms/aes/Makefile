@@ -1,12 +1,13 @@
 # AES Verification
 #
 # Targets:
-#   make all             - Build bitcode files
-#   make pbt             - Property-based testing (~10 min, 380 random tests)
-#   make verify          - Symbolic verification of primitives (~9 min)
-#   make verify-keysetup - Symbolic verification of key expansion (~30+ min)
-#   make verify-all      - Full symbolic verification (~40 min)
-#   make clean           - Remove generated files
+#   make all                 - Build bitcode files
+#   make pbt                 - Property-based testing (~10 min, 380 random tests)
+#   make verify              - Symbolic verification of primitives (~9 min)
+#   make verify-keysetup     - Symbolic verification of key expansion (~30+ min)
+#   make verify-encrypt-unint - Full encrypt/decrypt verification (~14 min)
+#   make verify-all          - Full symbolic verification
+#   make clean               - Remove generated files
 
 ROOT := ../../..
 include $(ROOT)/config.mk
@@ -18,9 +19,9 @@ REPO := ../repo
 BITCODE := aes.bc aes_pbt_harness.bc
 
 # SAW scripts
-SAW_SCRIPTS := aes_pbt.saw aes_verify.saw aes_verify_keysetup.saw
+SAW_SCRIPTS := aes_pbt.saw aes_verify.saw aes_verify_keysetup.saw aes_verify_encrypt_unint.saw
 
-.PHONY: all clean verify verify-keysetup verify-all pbt
+.PHONY: all clean verify verify-keysetup verify-encrypt-unint verify-all pbt
 
 all: $(BITCODE)
 
@@ -47,8 +48,13 @@ verify: $(BITCODE)
 verify-keysetup: $(BITCODE)
 	$(SAW) aes_verify_keysetup.saw
 
-# Full symbolic verification (primitives + key expansion)
-verify-all: verify verify-keysetup
+# Full verification with uninterpreted functions
+# Uses cipher unroll lemmas + w4_unint_z3 for faster proofs (~14 min)
+verify-encrypt-unint: $(BITCODE)
+	$(SAW) aes_verify_encrypt_unint.saw
+
+# Full symbolic verification (primitives + encrypt + key expansion)
+verify-all: verify verify-encrypt-unint verify-keysetup
 
 clean:
 	rm -f $(BITCODE)

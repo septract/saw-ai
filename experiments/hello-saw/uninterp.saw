@@ -1,0 +1,165 @@
+/*
+ * Demonstration of Uninterpreted Functions in SAW
+ *
+ * This script shows how keeping functions "uninterpreted" during proof
+ * can dramatically simplify equivalence checking.
+ *
+ * Key insight: When the same function appears identically on both sides
+ * of an equivalence, treating it as uninterpreted allows the solver to
+ * unify those terms without expanding the function's definition.
+ */
+
+print "=== Uninterpreted Functions Demo ===\n";
+
+// Load the LLVM bitcode
+m <- llvm_load_module "uninterp.bc";
+
+// ---------------------------------------------------------------------
+// Part 1: Define a Cryptol spec for the "complex" hash function
+// ---------------------------------------------------------------------
+
+// This mirrors the C implementation
+let {{
+    complex_hash : [32] -> [32]
+    complex_hash x = h3
+      where
+        c : [32]
+        c = 0x045d9f3b  // 8 hex digits for explicit 32-bit
+        h1 = (((x >> 16) ^ x) * c)
+        h2 = (((h1 >> 16) ^ h1) * c)
+        h3 = (h2 >> 16) ^ h2
+}};
+
+// ---------------------------------------------------------------------
+// Part 2: First, verify complex_hash matches the Cryptol spec
+// ---------------------------------------------------------------------
+
+print "Step 1: Verify complex_hash C implementation matches Cryptol spec";
+
+let complex_hash_spec = do {
+    x <- llvm_fresh_var "x" (llvm_int 32);
+    llvm_execute_func [llvm_term x];
+    llvm_return (llvm_term {{ complex_hash x }});
+};
+
+complex_hash_ov <- llvm_verify m "complex_hash" [] false complex_hash_spec z3;
+print "  VERIFIED: complex_hash matches Cryptol spec\n";
+
+// ---------------------------------------------------------------------
+// Part 3: Verify double_hash == double_hash_v2 using compositional verification
+// ---------------------------------------------------------------------
+
+print "Step 2: Verify double_hash == double_hash_v2 (compositional)";
+
+// Spec for double_hash: applies complex_hash twice
+let double_hash_spec = do {
+    x <- llvm_fresh_var "x" (llvm_int 32);
+    llvm_execute_func [llvm_term x];
+    llvm_return (llvm_term {{ complex_hash (complex_hash x) }});
+};
+
+// Verify both implementations against the same spec
+// Using complex_hash_ov as override avoids re-verifying complex_hash
+double_hash_ov <- llvm_verify m "double_hash" [complex_hash_ov] false double_hash_spec z3;
+print "  VERIFIED: double_hash";
+
+double_hash_v2_ov <- llvm_verify m "double_hash_v2" [complex_hash_ov] false double_hash_spec z3;
+print "  VERIFIED: double_hash_v2";
+print "  Both match spec: complex_hash(complex_hash(x))\n";
+
+// ---------------------------------------------------------------------
+// Part 4: Demonstrate uninterpreted functions in pure Cryptol proofs
+// ---------------------------------------------------------------------
+
+print "Step 3: Demonstrate uninterpreted function proofs\n";
+
+// Define a property using complex_hash
+let {{
+    // Property: double-hash is the same written two ways
+    double_hash_equiv : [32] -> Bit
+    double_hash_equiv x = complex_hash (complex_hash x) == result
+      where
+        first = complex_hash x
+        result = complex_hash first
+}};
+
+// Method A: Prove by expanding complex_hash (solver does all the work)
+print "  Method A: Full expansion (z3 expands complex_hash)";
+prove_print z3 {{ \x -> double_hash_equiv x }};
+print "    Proved with full expansion\n";
+
+// Method B: Keep complex_hash uninterpreted
+// The solver only knows: equal inputs give equal outputs
+print "  Method B: Keep complex_hash uninterpreted (w4_unint_z3)";
+prove_print (w4_unint_z3 ["complex_hash"]) {{ \x -> double_hash_equiv x }};
+print "    Proved with uninterpreted function\n";
+
+// ---------------------------------------------------------------------
+// Part 5: A more dramatic example - reflexivity
+// ---------------------------------------------------------------------
+
+print "Step 4: Trivial reflexivity with uninterpreted functions\n";
+
+// This property is trivially true by reflexivity
+let {{
+    reflexive_prop : [32] -> Bit
+    reflexive_prop x = complex_hash x == complex_hash x
+}};
+
+print "  Proving: complex_hash(x) == complex_hash(x)";
+print "  With complex_hash uninterpreted, this is just f(x) == f(x)";
+prove_print (w4_unint_z3 ["complex_hash"]) {{ \x -> reflexive_prop x }};
+print "    Proved by reflexivity!\n";
+
+// ---------------------------------------------------------------------
+// Part 6: Where uninterpreted functions DON'T help
+// ---------------------------------------------------------------------
+
+print "Step 5: Case where uninterpreted functions don't help\n";
+
+// If we need to reason about the function's internal behavior,
+// uninterpreted won't work. Example: proving a specific output.
+
+let {{
+    // This requires knowing what complex_hash actually computes
+    specific_output : Bit
+    specific_output = complex_hash 0 == 0
+}};
+
+print "  Trying to prove: complex_hash(0) == 0";
+print "  This requires knowing the function's definition...";
+
+// Note: This will fail with uninterpreted because we need
+// to actually compute complex_hash(0). Uncomment to see:
+// prove_print (w4_unint_z3 ["complex_hash"]) {{ specific_output }};
+
+// With full expansion, we can check if it's actually true:
+result <- prove_print z3 {{ complex_hash 0 == 0 }};
+print "    (The actual value of complex_hash(0) was computed by z3)\n";
+
+// ---------------------------------------------------------------------
+// Part 7: Verify hash_xor_pattern implementations match
+// ---------------------------------------------------------------------
+
+print "Step 6: Verify hash_xor_pattern == hash_xor_pattern_v2\n";
+
+let hash_xor_spec = do {
+    a <- llvm_fresh_var "a" (llvm_int 32);
+    b <- llvm_fresh_var "b" (llvm_int 32);
+    llvm_execute_func [llvm_term a, llvm_term b];
+    llvm_return (llvm_term {{ complex_hash a ^ complex_hash b }});
+};
+
+hash_xor_ov <- llvm_verify m "hash_xor_pattern" [complex_hash_ov] false hash_xor_spec z3;
+print "  VERIFIED: hash_xor_pattern";
+
+hash_xor_v2_ov <- llvm_verify m "hash_xor_pattern_v2" [complex_hash_ov] false hash_xor_spec z3;
+print "  VERIFIED: hash_xor_pattern_v2";
+
+print "\n=== All verifications complete! ===";
+print "";
+print "Key Takeaways:";
+print "1. Compositional verification: Use proven specs as overrides";
+print "2. w4_unint_z3 [\"name\"]: Keep functions abstract during SMT solving";
+print "3. Uninterpreted functions help when same function appears on both sides";
+print "4. They DON'T help when you need to compute specific outputs";

@@ -45,10 +45,24 @@ This adds the following tools to your PATH:
 - `cryptol` - Cryptol specification language
 - `z3` - Z3 SMT solver
 
+### Documentation
+
+The `docs/` folder contains guides and references discovered during verification work:
+
+- **[docs/compositional-verification-guide.md](docs/compositional-verification-guide.md)** - Comprehensive guide to verifying complex functions using overrides, uninterpreted functions, and simpsets. Start here for new verification projects.
+
+- **[docs/uninterpreted-functions-in-saw.md](docs/uninterpreted-functions-in-saw.md)** - Deep dive into uninterpreted functions: when to use them, which SAW commands exist, and important caveats.
+
+- **[docs/saw-pitfalls.md](docs/saw-pitfalls.md)** - Surprising behaviors and gotchas (Cryptol where clause scoping, llvm_unint not existing in SAW 1.4, etc.). Consult this when debugging strange errors.
+
 ### Directory Structure
 
 ```
 Makefile              # Top-level build (delegates to experiments)
+docs/
+  compositional-verification-guide.md  # How to verify complex functions
+  uninterpreted-functions-in-saw.md    # Uninterpreted functions reference
+  saw-pitfalls.md                      # Gotchas and surprising behaviors
 scripts/
   install-saw.sh      # Downloads and installs SAW
   saw-env.sh          # Environment setup script
@@ -139,6 +153,7 @@ make verify-keysetup    # Symbolic verify key expansion (~30+ min)
   - `aes_pbt.saw` - Property-based testing (380 random tests, ~10 min)
   - `aes_verify.saw` - Symbolic verification of primitives (~9 min)
   - `aes_verify_keysetup.saw` - Symbolic verification of key expansion (~30+ min)
+  - `aes_verify_encrypt_unint.saw` - Full encrypt/decrypt verification (~14 min)
 - Status:
   - **Primitives VERIFIED** (symbolic, 128-256 bits):
     - SubBytes, InvSubBytes (~2 min each)
@@ -146,13 +161,17 @@ make verify-keysetup    # Symbolic verify key expansion (~30+ min)
     - MixColumns (~20 sec), InvMixColumns (~4 min)
     - AddRoundKey (<1 sec)
   - **Key expansion**: PBT passing (50 tests), symbolic available via `make verify-keysetup`
-  - **Full encrypt/decrypt**: PBT passing (30 tests on random inputs)
+  - **Full encrypt/decrypt VERIFIED** (symbolic plaintext/ciphertext, concrete NIST key):
+    - aes_encrypt: 128 bits symbolic plaintext (~9 sec proof)
+    - aes_decrypt: 128 bits symbolic ciphertext (~9 sec proof)
+    - Uses uninterpreted functions + cipher unroll lemmas
 - Make targets:
   ```bash
-  make pbt              # Property-based testing (~10 min)
-  make verify           # Symbolic verify primitives (~9 min)
-  make verify-keysetup  # Symbolic verify key expansion (~30+ min)
-  make verify-all       # Everything (~40 min)
+  make pbt                  # Property-based testing (~10 min)
+  make verify               # Symbolic verify primitives (~9 min)
+  make verify-encrypt-unint # Full encrypt/decrypt verification (~14 min)
+  make verify-keysetup      # Symbolic verify key expansion (~30+ min)
+  make verify-all           # Everything
   ```
 
 ### Verification Strategy
