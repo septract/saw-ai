@@ -12,7 +12,7 @@ CFLAGS := -emit-llvm -c -g -O0
 export CLANG SAW CFLAGS
 
 # Experiment directories
-EXPERIMENTS := experiments/hello-saw experiments/crypto-algorithms
+EXPERIMENTS := experiments/hello-saw experiments/ffs experiments/crypto-algorithms
 
 .PHONY: all clean verify help $(EXPERIMENTS)
 
@@ -42,6 +42,7 @@ help:
 	@echo ""
 	@echo "Experiments:"
 	@echo "  experiments/hello-saw          - Simple max() example"
+	@echo "  experiments/ffs                - Find first set bit"
 	@echo "  experiments/crypto-algorithms  - SHA1 verification"
 	@echo ""
 	@echo "Tools:"

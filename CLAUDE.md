@@ -60,6 +60,9 @@ experiments/
   hello-saw/          # Simple example (max function)
     Makefile
     max.c, max.saw
+  ffs/                # Find First Set - tutorial example
+    Makefile
+    ffs.c, ffs.saw
   crypto-algorithms/  # Crypto library verification
     Makefile          # Delegates to algorithm subdirs
     repo/             # Cloned B-Con source (DO NOT MODIFY)
@@ -96,6 +99,14 @@ make verify-concrete    # Just run concrete tests
 ### Current Experiments
 
 **hello-saw/** - Simple max() function example
+
+**ffs/** - Find First Set bit (from SAW tutorial)
+- Four implementations: reference loop, binary search, DeBruijn, and buggy
+- Demonstrates `llvm_extract` + `prove`/`sat` workflow
+- Status: All VERIFIED
+  - ffs_imp == ffs_ref: VERIFIED (32 bits symbolic)
+  - ffs_musl == ffs_ref: VERIFIED (32 bits symbolic)
+  - ffs_bug counterexample: FOUND (x = 0x101010)
 
 **crypto-algorithms/sha1/** - Verifying B-Con SHA1 implementation
 - Source: https://github.com/B-Con/crypto-algorithms

@@ -1,0 +1,32 @@
+// FFS verification - prove all implementations equivalent to reference
+
+bc <- llvm_load_module "ffs.bc";
+
+// Extract all functions as SAW terms
+ffs_ref <- llvm_extract bc "ffs_ref";
+ffs_imp <- llvm_extract bc "ffs_imp";
+ffs_musl <- llvm_extract bc "ffs_musl";
+ffs_bug <- llvm_extract bc "ffs_bug";
+
+print "=== FFS Verification ===";
+print "";
+
+// 1. Verify ffs_imp (binary search) equals reference
+print "1. Proving ffs_imp == ffs_ref...";
+result <- prove z3 {{ \x -> ffs_imp x == ffs_ref x }};
+print result;
+print "";
+
+// 2. Verify ffs_musl (DeBruijn) equals reference
+print "2. Proving ffs_musl == ffs_ref...";
+result <- prove z3 {{ \x -> ffs_musl x == ffs_ref x }};
+print result;
+print "";
+
+// 3. Find counterexample for ffs_bug
+print "3. Finding counterexample for ffs_bug != ffs_ref...";
+result <- sat z3 {{ \x -> ffs_bug x != ffs_ref x }};
+print result;
+print "";
+
+print "=== All verifications complete! ===";
