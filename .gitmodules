@@ -1,0 +1,6 @@
+[submodule "specs/cryptol-specs"]
+	path = specs/cryptol-specs
+	url = https://github.com/GaloisInc/cryptol-specs.git
+[submodule "experiments/crypto-algorithms/repo"]
+	path = experiments/crypto-algorithms/repo
+	url = https://github.com/B-Con/crypto-algorithms.git

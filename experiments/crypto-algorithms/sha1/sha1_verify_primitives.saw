@@ -1,0 +1,86 @@
+// SAW verification of SHA1 primitive functions
+// These are tiny - should verify instantly with full symbolic inputs
+
+m <- llvm_load_module "sha1_single_round.bc";
+
+// ============================================================
+// Cryptol specs for primitive functions
+// ============================================================
+
+let {{
+    // Ch: (b & c) ^ (~b & d)
+    spec_ch : [32] -> [32] -> [32] -> [32]
+    spec_ch b c d = (b && c) ^ (~b && d)
+
+    // Parity: b ^ c ^ d
+    spec_parity : [32] -> [32] -> [32] -> [32]
+    spec_parity b c d = b ^ c ^ d
+
+    // Maj: (b & c) ^ (b & d) ^ (c & d)
+    spec_maj : [32] -> [32] -> [32] -> [32]
+    spec_maj b c d = (b && c) ^ (b && d) ^ (c && d)
+}};
+
+// ============================================================
+// Verify sha1_ch - FULL SYMBOLIC (96 bits)
+// ============================================================
+
+let sha1_ch_spec = do {
+    b <- llvm_fresh_var "b" (llvm_int 32);
+    c <- llvm_fresh_var "c" (llvm_int 32);
+    d <- llvm_fresh_var "d" (llvm_int 32);
+
+    llvm_execute_func [llvm_term b, llvm_term c, llvm_term d];
+
+    llvm_return (llvm_term {{ spec_ch b c d }});
+};
+
+print "=== SHA1 Primitive Function Verification ===";
+print "";
+
+print "1. Verifying sha1_ch (96 bits symbolic)...";
+ch_spec <- time (llvm_verify m "sha1_ch" [] false sha1_ch_spec z3);
+print "SUCCESS: sha1_ch verified!";
+print "";
+
+// ============================================================
+// Verify sha1_parity - FULL SYMBOLIC (96 bits)
+// ============================================================
+
+let sha1_parity_spec = do {
+    b <- llvm_fresh_var "b" (llvm_int 32);
+    c <- llvm_fresh_var "c" (llvm_int 32);
+    d <- llvm_fresh_var "d" (llvm_int 32);
+
+    llvm_execute_func [llvm_term b, llvm_term c, llvm_term d];
+
+    llvm_return (llvm_term {{ spec_parity b c d }});
+};
+
+print "2. Verifying sha1_parity (96 bits symbolic)...";
+parity_spec <- time (llvm_verify m "sha1_parity" [] false sha1_parity_spec z3);
+print "SUCCESS: sha1_parity verified!";
+print "";
+
+// ============================================================
+// Verify sha1_maj - FULL SYMBOLIC (96 bits)
+// ============================================================
+
+let sha1_maj_spec = do {
+    b <- llvm_fresh_var "b" (llvm_int 32);
+    c <- llvm_fresh_var "c" (llvm_int 32);
+    d <- llvm_fresh_var "d" (llvm_int 32);
+
+    llvm_execute_func [llvm_term b, llvm_term c, llvm_term d];
+
+    llvm_return (llvm_term {{ spec_maj b c d }});
+};
+
+print "3. Verifying sha1_maj (96 bits symbolic)...";
+maj_spec <- time (llvm_verify m "sha1_maj" [] false sha1_maj_spec z3);
+print "SUCCESS: sha1_maj verified!";
+print "";
+
+print "=== All primitive functions verified! ===";
+print "";
+print "These specs can now be used as overrides for single_round verification.";

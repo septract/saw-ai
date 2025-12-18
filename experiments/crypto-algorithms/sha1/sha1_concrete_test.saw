@@ -1,0 +1,136 @@
+// SAW concrete test: Compare C sha1_transform vs Cryptol sha1Block
+// Uses concrete test vectors for fast verification
+
+// Load the LLVM bitcode
+m <- llvm_load_module "sha1.bc";
+
+// Import the Cryptol SHA1 specification
+import "../../../specs/cryptol-specs/Primitive/Keyless/Hash/SHA1/Specification.cry";
+
+// Test the Cryptol spec first (sanity check)
+print "=== Testing Cryptol specification ===";
+
+// Test vector: SHA1("abc") = a9993e36 4706816a ba3e2571 7850c26c 9cd0d89d
+// This uses the full hash with padding, but we'll test the block function
+
+// Initial hash values (H0 from spec)
+let h0_init = {{ 0x67452301 : [32] }};
+let h1_init = {{ 0xefcdab89 : [32] }};
+let h2_init = {{ 0x98badcfe : [32] }};
+let h3_init = {{ 0x10325476 : [32] }};
+let h4_init = {{ 0xc3d2e1f0 : [32] }};
+
+// "abc" padded to 512 bits (64 bytes):
+// 61 62 63 80 00 00 ... 00 00 00 00 00 00 00 00 18
+// (message "abc" + 0x80 + zeros + length in bits = 24 = 0x18)
+let test_block = {{
+    0x61626380 # 0x00000000 # 0x00000000 # 0x00000000 #
+    0x00000000 # 0x00000000 # 0x00000000 # 0x00000000 #
+    0x00000000 # 0x00000000 # 0x00000000 # 0x00000000 #
+    0x00000000 # 0x00000000 # 0x00000000 # 0x00000018 : [512]
+}};
+
+// Compute expected result using Cryptol
+let cryptol_result = {{ sha1Block (h0_init, h1_init, h2_init, h3_init, h4_init) test_block }};
+
+// Print expected Cryptol output
+print "Cryptol sha1Block result for 'abc' (padded):";
+print cryptol_result;
+
+// Now test the C implementation with the same input
+print "";
+print "=== Testing C implementation vs Cryptol ===";
+
+// The SHA1 constants
+let K0 = {{ 0x5a827999 : [32] }};
+let K1 = {{ 0x6ed9eba1 : [32] }};
+let K2 = {{ 0x8f1bbcdc : [32] }};
+let K3 = {{ 0xca62c1d6 : [32] }};
+
+// Convert the 512-bit block to 64 bytes for C
+let test_block_bytes = {{
+    [0x61, 0x62, 0x63, 0x80, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18] : [64][8]
+}};
+
+// Specification for sha1_transform with CONCRETE inputs
+let sha1_transform_concrete_spec = do {
+    // Allocate the context struct
+    ctx_ptr <- llvm_alloc (llvm_struct "struct.SHA1_CTX");
+
+    // Set up concrete initial state
+    llvm_points_to (llvm_field ctx_ptr "state")
+        (llvm_term {{ [h0_init, h1_init, h2_init, h3_init, h4_init] }});
+    llvm_points_to (llvm_field ctx_ptr "k")
+        (llvm_term {{ [K0, K1, K2, K3] }});
+
+    // Allocate and set up concrete data block
+    data_ptr <- llvm_alloc_readonly (llvm_array 64 (llvm_int 8));
+    llvm_points_to data_ptr (llvm_term test_block_bytes);
+
+    // Execute the function
+    llvm_execute_func [ctx_ptr, data_ptr];
+
+    // Verify output matches Cryptol result
+    llvm_points_to (llvm_field ctx_ptr "state")
+        (llvm_term {{ [cryptol_result.0, cryptol_result.1, cryptol_result.2,
+                       cryptol_result.3, cryptol_result.4] }});
+};
+
+// Run the concrete verification
+print "Verifying sha1_transform with concrete 'abc' test vector...";
+llvm_verify m "sha1_transform" [] false sha1_transform_concrete_spec z3;
+print "SUCCESS: C implementation matches Cryptol spec for 'abc' test vector!";
+
+// Test vector 2: longer message
+print "";
+print "=== Test 2: 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq' ===";
+print "(This is a 2-block message, testing first block only)";
+
+// First block of the longer message (first 64 bytes, no padding yet)
+let test2_block_bytes = {{
+    [0x61, 0x62, 0x63, 0x64, 0x62, 0x63, 0x64, 0x65,  // abcdbcde
+     0x63, 0x64, 0x65, 0x66, 0x64, 0x65, 0x66, 0x67,  // cdefdefg
+     0x65, 0x66, 0x67, 0x68, 0x66, 0x67, 0x68, 0x69,  // efghfghi
+     0x67, 0x68, 0x69, 0x6a, 0x68, 0x69, 0x6a, 0x6b,  // ghijhijk
+     0x69, 0x6a, 0x6b, 0x6c, 0x6a, 0x6b, 0x6c, 0x6d,  // ijkljklm
+     0x6b, 0x6c, 0x6d, 0x6e, 0x6c, 0x6d, 0x6e, 0x6f,  // klmnlmno
+     0x6d, 0x6e, 0x6f, 0x70, 0x6e, 0x6f, 0x70, 0x71,  // mnopnopq
+     0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] : [64][8]  // padding start
+}};
+
+let test2_block = {{ join test2_block_bytes : [512] }};
+let cryptol_result2 = {{ sha1Block (h0_init, h1_init, h2_init, h3_init, h4_init) test2_block }};
+
+print "Cryptol result for first block:";
+print cryptol_result2;
+
+let sha1_transform_concrete_spec2 = do {
+    ctx_ptr <- llvm_alloc (llvm_struct "struct.SHA1_CTX");
+    llvm_points_to (llvm_field ctx_ptr "state")
+        (llvm_term {{ [h0_init, h1_init, h2_init, h3_init, h4_init] }});
+    llvm_points_to (llvm_field ctx_ptr "k")
+        (llvm_term {{ [K0, K1, K2, K3] }});
+
+    data_ptr <- llvm_alloc_readonly (llvm_array 64 (llvm_int 8));
+    llvm_points_to data_ptr (llvm_term test2_block_bytes);
+
+    llvm_execute_func [ctx_ptr, data_ptr];
+
+    llvm_points_to (llvm_field ctx_ptr "state")
+        (llvm_term {{ [cryptol_result2.0, cryptol_result2.1, cryptol_result2.2,
+                       cryptol_result2.3, cryptol_result2.4] }});
+};
+
+print "Verifying sha1_transform with test vector 2...";
+llvm_verify m "sha1_transform" [] false sha1_transform_concrete_spec2 z3;
+print "SUCCESS: Test vector 2 passed!";
+
+print "";
+print "=== All concrete tests PASSED ===";

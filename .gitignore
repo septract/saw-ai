@@ -1,0 +1,9 @@
+# Downloaded tools
+tools/
+junk/
+
+# Claude Code local settings
+.claude/
+
+# Generated bitcode (can rebuild with make)
+*.bc
