@@ -1,0 +1,46 @@
+// AES Key Expansion Symbolic Verification
+// Verifies aes_key_setup against Cryptol keyExpansion
+//
+// WARNING: This takes ~30+ minutes due to the complexity of key expansion
+
+m <- llvm_load_module "aes.bc";
+
+import "../../../specs/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/Instantiations/AES128.cry";
+
+print "=== AES Key Setup Symbolic Verification ===";
+print "";
+print "WARNING: This verification takes ~30+ minutes.";
+print "";
+
+print "Verifying aes_key_setup for AES-128 (128 bits symbolic key)...";
+
+let aes_key_setup_128_spec = do {
+    // Input: 16-byte key (symbolic)
+    key_ptr <- llvm_alloc_readonly (llvm_array 16 (llvm_int 8));
+    key_in <- llvm_fresh_var "key" (llvm_array 16 (llvm_int 8));
+    llvm_points_to key_ptr (llvm_term key_in);
+
+    // Output: 44-word key schedule
+    w_ptr <- llvm_alloc (llvm_array 44 (llvm_int 32));
+
+    // Keysize: 128
+    llvm_execute_func [key_ptr, w_ptr, llvm_term {{ 128 : [32] }}];
+
+    // Verify output matches Cryptol keyExpansion (converted to C format)
+    // C format: [44][32] - each WORD is big-endian packed column bytes
+    // Cryptol: [11][4][4][8] - 11 RoundKeys, each 4 rows x 4 cols of bytes
+    let expected = {{
+        join [ [ join col | col <- transpose rk ] | rk <- keyExpansion (join key_in) ]
+    }};
+    llvm_points_to w_ptr (llvm_term expected);
+};
+
+llvm_verify m "aes_key_setup" [] false aes_key_setup_128_spec z3;
+print "   aes_key_setup (AES-128): VERIFIED";
+print "";
+
+print "============================================================";
+print "=== KEY SETUP VERIFICATION PASSED ===";
+print "============================================================";
+print "";
+print "This is an exhaustive proof covering ALL possible 128-bit keys.";

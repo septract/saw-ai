@@ -1,0 +1,283 @@
+// AES Property-Based Testing Module
+// Provides Cryptol specs that match the scalar C wrappers for PBT via llvm_extract
+//
+// The C wrappers pack/unpack state as two 64-bit values.
+// These Cryptol functions do the same transformations.
+
+module AES_PBT where
+
+import Primitive::Symmetric::Cipher::Block::AES::Specification as AES128
+    where type KeySize' = 128
+
+// Re-export types we need
+type State = [4][4][8]
+type RoundKey = [4][4][8]
+
+//////////////////////////////////////////////////////////////////////////////
+// Pack/Unpack Functions
+// Match the C harness convention for state representation
+//////////////////////////////////////////////////////////////////////////////
+
+// State is packed as two [64] values:
+//   lo = state[0][0..3] || state[1][0..3]  (rows 0-1, big-endian)
+//   hi = state[2][0..3] || state[3][0..3]  (rows 2-3, big-endian)
+
+// Unpack two [64] into State
+unpackState : [64] -> [64] -> State
+unpackState lo hi = [row0, row1, row2, row3]
+  where
+    row0 = split`{4} (take`{32} lo)
+    row1 = split`{4} (drop`{32} lo)
+    row2 = split`{4} (take`{32} hi)
+    row3 = split`{4} (drop`{32} hi)
+
+// Pack State into lo [64]
+packStateLo : State -> [64]
+packStateLo s = join (s @ 0) # join (s @ 1)
+
+// Pack State into hi [64]
+packStateHi : State -> [64]
+packStateHi s = join (s @ 2) # join (s @ 3)
+
+// Round trip property
+property packUnpackRoundTrip lo hi =
+    packStateLo (unpackState lo hi) == lo /\
+    packStateHi (unpackState lo hi) == hi
+
+//////////////////////////////////////////////////////////////////////////////
+// SBox - single byte
+//////////////////////////////////////////////////////////////////////////////
+
+// Reference SBox using Cryptol spec
+SBox_ref : [8] -> [8]
+SBox_ref b = AES128::SBox b
+
+InvSBox_ref : [8] -> [8]
+InvSBox_ref b = AES128::SBoxInv b
+
+// Inverse property
+property SBoxInverts b = InvSBox_ref (SBox_ref b) == b
+
+//////////////////////////////////////////////////////////////////////////////
+// SubBytes - full state transformation
+// C wrapper: pbt_SubBytes_lo/hi(in_lo, in_hi) -> out_lo/hi
+//////////////////////////////////////////////////////////////////////////////
+
+// Reference: given packed inputs, return packed outputs
+SubBytes_lo_ref : [64] -> [64] -> [64]
+SubBytes_lo_ref lo hi = packStateLo (AES128::SubBytes (unpackState lo hi))
+
+SubBytes_hi_ref : [64] -> [64] -> [64]
+SubBytes_hi_ref lo hi = packStateHi (AES128::SubBytes (unpackState lo hi))
+
+InvSubBytes_lo_ref : [64] -> [64] -> [64]
+InvSubBytes_lo_ref lo hi = packStateLo (AES128::InvSubBytes (unpackState lo hi))
+
+InvSubBytes_hi_ref : [64] -> [64] -> [64]
+InvSubBytes_hi_ref lo hi = packStateHi (AES128::InvSubBytes (unpackState lo hi))
+
+// Inverse property
+property SubBytesInverts lo hi =
+    InvSubBytes_lo_ref (SubBytes_lo_ref lo hi) (SubBytes_hi_ref lo hi) == lo /\
+    InvSubBytes_hi_ref (SubBytes_lo_ref lo hi) (SubBytes_hi_ref lo hi) == hi
+
+//////////////////////////////////////////////////////////////////////////////
+// ShiftRows - full state transformation
+//////////////////////////////////////////////////////////////////////////////
+
+ShiftRows_lo_ref : [64] -> [64] -> [64]
+ShiftRows_lo_ref lo hi = packStateLo (AES128::ShiftRows (unpackState lo hi))
+
+ShiftRows_hi_ref : [64] -> [64] -> [64]
+ShiftRows_hi_ref lo hi = packStateHi (AES128::ShiftRows (unpackState lo hi))
+
+InvShiftRows_lo_ref : [64] -> [64] -> [64]
+InvShiftRows_lo_ref lo hi = packStateLo (AES128::InvShiftRows (unpackState lo hi))
+
+InvShiftRows_hi_ref : [64] -> [64] -> [64]
+InvShiftRows_hi_ref lo hi = packStateHi (AES128::InvShiftRows (unpackState lo hi))
+
+property ShiftRowsInverts lo hi =
+    InvShiftRows_lo_ref (ShiftRows_lo_ref lo hi) (ShiftRows_hi_ref lo hi) == lo /\
+    InvShiftRows_hi_ref (ShiftRows_lo_ref lo hi) (ShiftRows_hi_ref lo hi) == hi
+
+//////////////////////////////////////////////////////////////////////////////
+// MixColumns - full state transformation
+//////////////////////////////////////////////////////////////////////////////
+
+MixColumns_lo_ref : [64] -> [64] -> [64]
+MixColumns_lo_ref lo hi = packStateLo (AES128::MixColumns (unpackState lo hi))
+
+MixColumns_hi_ref : [64] -> [64] -> [64]
+MixColumns_hi_ref lo hi = packStateHi (AES128::MixColumns (unpackState lo hi))
+
+InvMixColumns_lo_ref : [64] -> [64] -> [64]
+InvMixColumns_lo_ref lo hi = packStateLo (AES128::InvMixColumns (unpackState lo hi))
+
+InvMixColumns_hi_ref : [64] -> [64] -> [64]
+InvMixColumns_hi_ref lo hi = packStateHi (AES128::InvMixColumns (unpackState lo hi))
+
+property MixColumnsInverts lo hi =
+    InvMixColumns_lo_ref (MixColumns_lo_ref lo hi) (MixColumns_hi_ref lo hi) == lo /\
+    InvMixColumns_hi_ref (MixColumns_lo_ref lo hi) (MixColumns_hi_ref lo hi) == hi
+
+//////////////////////////////////////////////////////////////////////////////
+// AddRoundKey - state XOR with round key
+// C wrapper packs key as: key_lo = w0||w1, key_hi = w2||w3
+//////////////////////////////////////////////////////////////////////////////
+
+// Unpack key from two [64] to [4][32] words
+unpackKey : [64] -> [64] -> [4][32]
+unpackKey lo hi = [take`{32} lo, drop`{32} lo, take`{32} hi, drop`{32} hi]
+
+// Convert [4][32] words to RoundKey [4][4][8]
+// C's w[col] = join of column bytes (big-endian): rk[0][col] || rk[1][col] || rk[2][col] || rk[3][col]
+wordsToRoundKey : [4][32] -> RoundKey
+wordsToRoundKey ws = transpose [ split w | w <- ws ]
+
+AddRoundKey_lo_ref : [64] -> [64] -> [64] -> [64] -> [64]
+AddRoundKey_lo_ref state_lo state_hi key_lo key_hi =
+    packStateLo (AES128::AddRoundKey rk state)
+  where
+    state = unpackState state_lo state_hi
+    rk = wordsToRoundKey (unpackKey key_lo key_hi)
+
+AddRoundKey_hi_ref : [64] -> [64] -> [64] -> [64] -> [64]
+AddRoundKey_hi_ref state_lo state_hi key_lo key_hi =
+    packStateHi (AES128::AddRoundKey rk state)
+  where
+    state = unpackState state_lo state_hi
+    rk = wordsToRoundKey (unpackKey key_lo key_hi)
+
+// AddRoundKey is self-inverse (XOR property)
+property AddRoundKeySelfInverse state_lo state_hi key_lo key_hi =
+    AddRoundKey_lo_ref out_lo out_hi key_lo key_hi == state_lo /\
+    AddRoundKey_hi_ref out_lo out_hi key_lo key_hi == state_hi
+  where
+    out_lo = AddRoundKey_lo_ref state_lo state_hi key_lo key_hi
+    out_hi = AddRoundKey_hi_ref state_lo state_hi key_lo key_hi
+
+//////////////////////////////////////////////////////////////////////////////
+// SubWord - applies SBox to each byte of a 32-bit word
+//////////////////////////////////////////////////////////////////////////////
+
+SubWord_ref : [32] -> [32]
+SubWord_ref word = join [ AES128::SBox b | b <- split`{4} word ]
+
+//////////////////////////////////////////////////////////////////////////////
+// Key Expansion Step
+// For round i where i % Nk == 0:
+//   temp = SubWord(RotWord(w[i-1])) ^ Rcon
+//   w[i] = w[i-Nk] ^ temp
+//////////////////////////////////////////////////////////////////////////////
+
+RotWord_ref : [32] -> [32]
+RotWord_ref word = word <<< 8
+
+KeyExpansionStep_ref : [32] -> [32] -> [32] -> [32]
+KeyExpansionStep_ref w_prev w_nk rcon = w_nk ^ temp
+  where
+    temp = SubWord_ref (RotWord_ref w_prev) ^ rcon
+
+// Simple step: w[i] = w[i-1] ^ w[i-Nk]
+KeyExpansionStepSimple_ref : [32] -> [32] -> [32]
+KeyExpansionStepSimple_ref w_prev w_nk = w_prev ^ w_nk
+
+//////////////////////////////////////////////////////////////////////////////
+// Key Schedule Format Conversions (for full key expansion testing)
+//////////////////////////////////////////////////////////////////////////////
+
+// Convert a single Cryptol RoundKey [4][4][8] to C format [4][32]
+roundKeyToWords : RoundKey -> [4][32]
+roundKeyToWords rk = [ join col | col <- transpose rk ]
+
+// Convert full Cryptol key schedule to C format
+keyScheduleToCFormat : [11]RoundKey -> [44][32]
+keyScheduleToCFormat ks = join [ roundKeyToWords rk | rk <- ks ]
+
+// Round-trip property for format conversions
+property roundKeyRoundTrip rk = wordsToRoundKey (roundKeyToWords rk) == rk
+
+//////////////////////////////////////////////////////////////////////////////
+// Full Key Expansion (AES-128)
+// C wrapper returns specific round keys
+//////////////////////////////////////////////////////////////////////////////
+
+// Unpack 128-bit key from two [64] to [128]
+unpackKey128 : [64] -> [64] -> [128]
+unpackKey128 lo hi = lo # hi
+
+// Get full key schedule from packed key
+getKeySchedule : [64] -> [64] -> [11]RoundKey
+getKeySchedule key_lo key_hi = AES128::keyExpansion (unpackKey128 key_lo key_hi)
+
+// Get a specific round key (returns packed lo/hi)
+// round ranges from 0 to 10
+RoundKey_lo_ref : [64] -> [64] -> [32] -> [64]
+RoundKey_lo_ref key_lo key_hi round = lo
+  where
+    ks = getKeySchedule key_lo key_hi
+    // Clamp round to valid range
+    r = if round > 10 then 10 else round
+    rk = ks @ r
+    words = roundKeyToWords rk
+    lo = (words @ 0) # (words @ 1)
+
+RoundKey_hi_ref : [64] -> [64] -> [32] -> [64]
+RoundKey_hi_ref key_lo key_hi round = hi
+  where
+    ks = getKeySchedule key_lo key_hi
+    r = if round > 10 then 10 else round
+    rk = ks @ r
+    words = roundKeyToWords rk
+    hi = (words @ 2) # (words @ 3)
+
+// Get a specific word from the key schedule (0 to 43)
+KeyScheduleWord_ref : [64] -> [64] -> [32] -> [32]
+KeyScheduleWord_ref key_lo key_hi word_index = result
+  where
+    ks = getKeySchedule key_lo key_hi
+    all_words = join [ roundKeyToWords rk | rk <- ks ]
+    // Clamp to valid range
+    idx = if word_index > 43 then 43 else word_index
+    result = all_words @ idx
+
+//////////////////////////////////////////////////////////////////////////////
+// Full AES-128 Encryption/Decryption
+//////////////////////////////////////////////////////////////////////////////
+
+// Pack/unpack block as 16 bytes (same as key)
+unpackBlock : [64] -> [64] -> [128]
+unpackBlock lo hi = lo # hi
+
+packBlock_lo : [128] -> [64]
+packBlock_lo block = take`{64} block
+
+packBlock_hi : [128] -> [64]
+packBlock_hi block = drop`{64} block
+
+// Full encryption
+aes_encrypt_lo_ref : [64] -> [64] -> [64] -> [64] -> [64]
+aes_encrypt_lo_ref pt_lo pt_hi key_lo key_hi =
+    packBlock_lo (AES128::encrypt (unpackKey128 key_lo key_hi) (unpackBlock pt_lo pt_hi))
+
+aes_encrypt_hi_ref : [64] -> [64] -> [64] -> [64] -> [64]
+aes_encrypt_hi_ref pt_lo pt_hi key_lo key_hi =
+    packBlock_hi (AES128::encrypt (unpackKey128 key_lo key_hi) (unpackBlock pt_lo pt_hi))
+
+// Full decryption
+aes_decrypt_lo_ref : [64] -> [64] -> [64] -> [64] -> [64]
+aes_decrypt_lo_ref ct_lo ct_hi key_lo key_hi =
+    packBlock_lo (AES128::decrypt (unpackKey128 key_lo key_hi) (unpackBlock ct_lo ct_hi))
+
+aes_decrypt_hi_ref : [64] -> [64] -> [64] -> [64] -> [64]
+aes_decrypt_hi_ref ct_lo ct_hi key_lo key_hi =
+    packBlock_hi (AES128::decrypt (unpackKey128 key_lo key_hi) (unpackBlock ct_lo ct_hi))
+
+// Encryption/decryption round-trip property
+property encryptDecryptRoundTrip pt_lo pt_hi key_lo key_hi =
+    aes_decrypt_lo_ref ct_lo ct_hi key_lo key_hi == pt_lo /\
+    aes_decrypt_hi_ref ct_lo ct_hi key_lo key_hi == pt_hi
+  where
+    ct_lo = aes_encrypt_lo_ref pt_lo pt_hi key_lo key_hi
+    ct_hi = aes_encrypt_hi_ref pt_lo pt_hi key_lo key_hi

@@ -1,7 +1,10 @@
 # Crypto Algorithms Verification
 # Delegates to per-algorithm subdirectories
 
-ALGORITHMS := sha1
+ROOT := ../..
+include $(ROOT)/config.mk
+
+ALGORITHMS := sha1 aes
 
 .PHONY: all clean verify $(ALGORITHMS)
 

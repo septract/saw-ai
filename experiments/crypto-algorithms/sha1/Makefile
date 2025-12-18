@@ -1,5 +1,8 @@
 # SHA1 Verification
 
+ROOT := ../../..
+include $(ROOT)/config.mk
+
 # Original source from B-Con repo
 REPO := ../repo
 

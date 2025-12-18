@@ -1,0 +1,173 @@
+// AES Symbolic Verification
+// Verifies C implementations against Cryptol specifications using SMT solvers
+//
+// This provides exhaustive proofs (not just testing) that C code matches spec.
+
+m <- llvm_load_module "aes.bc";
+
+// Import Cryptol AES specification
+import "../../../specs/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/Instantiations/AES128.cry";
+
+print "=== AES Symbolic Verification ===";
+print "";
+
+// The C state is BYTE state[4][4] - a 4x4 array of bytes
+// Cryptol State = [4][4]GF28 - same layout
+// Both use state[row][col] indexing
+
+let state_type = llvm_array 4 (llvm_array 4 (llvm_int 8));
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 1: Primitive Functions (128 bits symbolic each)
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 1: Primitive Functions";
+print "============================================================";
+print "";
+
+// 1. SubBytes
+print "Verifying SubBytes (128 bits symbolic)...";
+
+let SubBytes_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    llvm_execute_func [state_ptr];
+
+    llvm_points_to state_ptr (llvm_term {{ SubBytes state_in }});
+};
+
+llvm_verify m "SubBytes" [] false SubBytes_spec z3;
+print "   SubBytes: VERIFIED";
+
+// 2. InvSubBytes
+print "Verifying InvSubBytes (128 bits symbolic)...";
+
+let InvSubBytes_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    llvm_execute_func [state_ptr];
+
+    llvm_points_to state_ptr (llvm_term {{ InvSubBytes state_in }});
+};
+
+llvm_verify m "InvSubBytes" [] false InvSubBytes_spec z3;
+print "   InvSubBytes: VERIFIED";
+
+// 3. ShiftRows
+print "Verifying ShiftRows (128 bits symbolic)...";
+
+let ShiftRows_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    llvm_execute_func [state_ptr];
+
+    llvm_points_to state_ptr (llvm_term {{ ShiftRows state_in }});
+};
+
+llvm_verify m "ShiftRows" [] false ShiftRows_spec z3;
+print "   ShiftRows: VERIFIED";
+
+// 4. InvShiftRows
+print "Verifying InvShiftRows (128 bits symbolic)...";
+
+let InvShiftRows_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    llvm_execute_func [state_ptr];
+
+    llvm_points_to state_ptr (llvm_term {{ InvShiftRows state_in }});
+};
+
+llvm_verify m "InvShiftRows" [] false InvShiftRows_spec z3;
+print "   InvShiftRows: VERIFIED";
+
+// 5. MixColumns
+print "Verifying MixColumns (128 bits symbolic)...";
+
+let MixColumns_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    llvm_execute_func [state_ptr];
+
+    llvm_points_to state_ptr (llvm_term {{ MixColumns state_in }});
+};
+
+llvm_verify m "MixColumns" [] false MixColumns_spec z3;
+print "   MixColumns: VERIFIED";
+
+// 6. InvMixColumns
+print "Verifying InvMixColumns (128 bits symbolic)...";
+
+let InvMixColumns_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    llvm_execute_func [state_ptr];
+
+    llvm_points_to state_ptr (llvm_term {{ InvMixColumns state_in }});
+};
+
+llvm_verify m "InvMixColumns" [] false InvMixColumns_spec z3;
+print "   InvMixColumns: VERIFIED";
+
+// 7. AddRoundKey
+print "Verifying AddRoundKey (256 bits symbolic: state + key)...";
+
+let AddRoundKey_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    // Round key is 4 WORDs (each 32 bits)
+    key_ptr <- llvm_alloc_readonly (llvm_array 4 (llvm_int 32));
+    key_in <- llvm_fresh_var "key_in" (llvm_array 4 (llvm_int 32));
+    llvm_points_to key_ptr (llvm_term key_in);
+
+    llvm_execute_func [state_ptr, key_ptr];
+
+    // Convert C key format to Cryptol RoundKey format
+    // C: [4][32] where each word is big-endian packed column
+    // Cryptol RoundKey: [4][4][8] where rk[row][col]
+    let cryptol_key = {{ transpose [ split w | w <- key_in ] }};
+
+    llvm_points_to state_ptr (llvm_term {{ AddRoundKey cryptol_key state_in }});
+};
+
+llvm_verify m "AddRoundKey" [] false AddRoundKey_spec z3;
+print "   AddRoundKey: VERIFIED";
+print "";
+
+// NOTE: Key expansion verification is in aes_verify_keysetup.saw (takes ~30+ min)
+
+//////////////////////////////////////////////////////////////////////////////
+// Summary
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "=== ALL PRIMITIVE VERIFICATIONS PASSED ===";
+print "============================================================";
+print "";
+print "Verified functions:";
+print "  - SubBytes: 128 bits symbolic";
+print "  - InvSubBytes: 128 bits symbolic";
+print "  - ShiftRows: 128 bits symbolic";
+print "  - InvShiftRows: 128 bits symbolic";
+print "  - MixColumns: 128 bits symbolic";
+print "  - InvMixColumns: 128 bits symbolic";
+print "  - AddRoundKey: 256 bits symbolic (state + key)";
+print "";
+print "These are exhaustive proofs covering ALL possible inputs.";
+print "";
+print "For key expansion verification, run: make verify-keysetup";

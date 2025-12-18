@@ -1,5 +1,8 @@
 # Hello SAW - Simple verification example
 
+ROOT := ../..
+include $(ROOT)/config.mk
+
 BITCODE := max.bc
 SOURCES := max.c
 SAW_SCRIPTS := max.saw

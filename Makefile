@@ -1,15 +1,9 @@
 # SAW Crypto Verification Project
 # Top-level Makefile
 
-# Tools
-CLANG := /opt/homebrew/opt/llvm@18/bin/clang
-SAW := $(CURDIR)/tools/saw/bin/saw
-
-# Clang flags for SAW compatibility
-CFLAGS := -emit-llvm -c -g -O0
-
-# Export for sub-makefiles
-export CLANG SAW CFLAGS
+# Project root for config.mk
+ROOT := $(CURDIR)
+include $(ROOT)/config.mk
 
 # Experiment directories
 EXPERIMENTS := experiments/hello-saw experiments/ffs experiments/crypto-algorithms

@@ -74,6 +74,13 @@ experiments/
       sha1_concrete_test.saw     # Concrete tests
       sha1_verify_primitives.saw # Verify Ch/Parity/Maj
       sha1_verify_single_round.saw # Verify single round functions
+    aes/              # AES-128 verification
+      Makefile
+      aes_pbt_harness.c          # C wrappers for PBT
+      aes_pbt.cry                # Cryptol specs for testing
+      aes_pbt.saw                # Property-based testing
+      aes_verify.saw             # Symbolic verification (primitives)
+      aes_verify_keysetup.saw    # Symbolic verification (key expansion)
 ```
 
 ### Build System
@@ -90,10 +97,17 @@ make clean    # Remove generated .bc files
 Or run specific verifications:
 
 ```bash
+# SHA1
 cd experiments/crypto-algorithms/sha1
 make verify-primitives  # Just verify Ch/Parity/Maj
 make verify-rounds      # Just verify single rounds
 make verify-concrete    # Just run concrete tests
+
+# AES
+cd experiments/crypto-algorithms/aes
+make pbt                # Property-based testing (~10 min)
+make verify             # Symbolic verify primitives (~9 min)
+make verify-keysetup    # Symbolic verify key expansion (~30+ min)
 ```
 
 ### Current Experiments
@@ -116,8 +130,33 @@ make verify-concrete    # Just run concrete tests
   - Primitives (Ch, Parity, Maj): VERIFIED (96 bits symbolic each)
   - Single rounds: VERIFIED (224 bits symbolic, compositional)
 
+**crypto-algorithms/aes/** - Verifying B-Con AES-128 implementation
+- Source: https://github.com/B-Con/crypto-algorithms
+- Reference spec: specs/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/
+- Files:
+  - `aes_pbt_harness.c` - C wrappers for PBT (scalar interfaces)
+  - `aes_pbt.cry` - Cryptol specs for testing
+  - `aes_pbt.saw` - Property-based testing (380 random tests, ~10 min)
+  - `aes_verify.saw` - Symbolic verification of primitives (~9 min)
+  - `aes_verify_keysetup.saw` - Symbolic verification of key expansion (~30+ min)
+- Status:
+  - **Primitives VERIFIED** (symbolic, 128-256 bits):
+    - SubBytes, InvSubBytes (~2 min each)
+    - ShiftRows, InvShiftRows (<1 sec each)
+    - MixColumns (~20 sec), InvMixColumns (~4 min)
+    - AddRoundKey (<1 sec)
+  - **Key expansion**: PBT passing (50 tests), symbolic available via `make verify-keysetup`
+  - **Full encrypt/decrypt**: PBT passing (30 tests on random inputs)
+- Make targets:
+  ```bash
+  make pbt              # Property-based testing (~10 min)
+  make verify           # Symbolic verify primitives (~9 min)
+  make verify-keysetup  # Symbolic verify key expansion (~30+ min)
+  make verify-all       # Everything (~40 min)
+  ```
+
 ### Verification Strategy
 
-1. **Concrete tests first** - Fast, catches obvious bugs
-2. **Compositional verification** - Verify small functions, use as overrides for larger ones
-3. **Full symbolic** - Complete verification (often intractable for crypto)
+1. **Property-based testing first** - Fast random testing, catches spec bugs quickly
+2. **Symbolic verification** - Exhaustive proofs for tractable functions
+3. **Compositional verification** - Verify small functions, use as overrides for larger ones

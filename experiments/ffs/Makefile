@@ -1,5 +1,8 @@
 # Find First Set - SAW verification example
 
+ROOT := ../..
+include $(ROOT)/config.mk
+
 BITCODE := ffs.bc
 SOURCES := ffs.c
 
