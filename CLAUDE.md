@@ -71,9 +71,12 @@ tools/
 specs/
   cryptol-specs/      # Galois reference Cryptol specifications (cloned from GitHub)
 experiments/
-  hello-saw/          # Simple example (max function)
+  hello-saw/          # Simple examples and SAW technique demos
     Makefile
-    max.c, max.saw
+    max.c, max.saw                 # Basic function verification
+    uninterp.c, uninterp.saw       # Uninterpreted functions demo
+    loop_invariant.c, loop_invariant.saw  # Loop invariant verification
+    accumulator.cry                # Cryptol spec for loop invariant example
   ffs/                # Find First Set - tutorial example
     Makefile
     ffs.c, ffs.saw
@@ -126,7 +129,13 @@ make verify-keysetup    # Symbolic verify key expansion (~30+ min)
 
 ### Current Experiments
 
-**hello-saw/** - Simple max() function example
+**hello-saw/** - SAW technique demonstrations
+- **max.saw**: Basic function verification
+- **uninterp.saw**: Uninterpreted functions and compositional verification
+- **loop_invariant.saw**: Loop invariant verification using breakpoints
+  - Demonstrates SAW's `__breakpoint__` mechanism for loop invariants
+  - Key insight: ALL live variables must be passed to breakpoint functions
+- Status: All VERIFIED
 
 **ffs/** - Find First Set bit (from SAW tutorial)
 - Four implementations: reference loop, binary search, DeBruijn, and buggy

@@ -1,0 +1,22 @@
+/*
+ * Cryptol spec for accumulator example
+ * Simple 4-variable loop
+ */
+
+module accumulator where
+
+// Full function: a and b each increment n times
+// a' = a + n, b' = 0 + n = n
+// return a' + b' = a + n + n = a + 2*n
+accumulate : [64] -> [64] -> [64]
+accumulate a n = (a + n) + n
+
+// Invariant: given current state and position, compute remaining result
+// After i iterations: a' = a + i, b' = i
+// Remaining iterations: n - i
+// Final: a' + (n-i) + b' + (n-i) = a + i + (n-i) + i + (n-i) = a + n + n = a + 2n
+// Simplified: (a + (n-i)) + (b + (n-i)) = a + b + 2*(n-i)
+acc_rest : [64] -> [64] -> [64] -> [64] -> [64]
+acc_rest a b n i = (a + (n - i)) + (b + (n - i))
+
+// See MiniSha.cry for compositional verification example
