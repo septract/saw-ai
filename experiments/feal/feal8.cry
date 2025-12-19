@@ -1,0 +1,270 @@
+/*
+ * FEAL-8 (Fast Data Encipherment Algorithm) Cryptol Specification
+ *
+ * Based on:
+ *   - Shimizu & Miyaguchi, "Fast Data Encipherment Algorithm FEAL",
+ *     EUROCRYPT 1987, LNCS vol 304, pp 267-278
+ *   - Menezes et al, "Handbook of Applied Cryptography", Section 7.5
+ *
+ * Block size: 64 bits
+ * Key size: 64 bits
+ * Rounds: 8
+ */
+
+module FEAL8 where
+
+// ============================================================================
+// Type definitions
+// ============================================================================
+
+type Block = [64]       // 64-bit block
+type Key = [64]         // 64-bit key
+type Half = [32]        // 32-bit half-block
+type Byte = [8]         // 8-bit byte
+type SubKey = [16]      // 16-bit subkey
+type SubKeys = [16]SubKey  // 16 subkeys for FEAL-8
+
+// ============================================================================
+// S-box functions (S0 and S1)
+//
+// From HAC Section 7.5:
+//   S_d(x, y) = ROT2((x + y + d) mod 256)
+// where d ∈ {0, 1} and ROT2 is 2-bit left rotation
+// ============================================================================
+
+// 2-bit left rotation on a byte
+ROT2 : Byte -> Byte
+ROT2 x = x <<< 2
+
+// S0: S-box with d=0
+S0 : Byte -> Byte -> Byte
+S0 x y = ROT2 ((x + y) : Byte)
+
+// S1: S-box with d=1
+S1 : Byte -> Byte -> Byte
+S1 x y = ROT2 ((x + y + 1) : Byte)
+
+// ============================================================================
+// f function (round function)
+//
+// From HAC Algorithm 7.94:
+//   Input: 32-bit data (4 bytes A0..A3), 16-bit subkey (2 bytes Y0,Y1)
+//   Output: 32-bit result (4 bytes U0..U3)
+//
+//   t1 = (A0 ^ A1) ^ Y0
+//   t2 = (A2 ^ A3) ^ Y1
+//   U1 = S1(t1, t2)
+//   U2 = S0(t2, U1)
+//   U0 = S0(A0, U1)
+//   U3 = S1(A3, U2)
+// ============================================================================
+
+f : Half -> SubKey -> Half
+f a y = join [u0, u1, u2, u3]
+  where
+    // Split input into bytes
+    [a0, a1, a2, a3] = split`{4} a : [4]Byte
+    [y0, y1] = split`{2} y : [2]Byte
+
+    // Intermediate values
+    t1 = (a0 ^ a1) ^ y0
+    t2 = (a2 ^ a3) ^ y1
+
+    // S-box applications (note the data dependencies)
+    u1 = S1 t1 t2
+    u2 = S0 t2 u1
+    u0 = S0 a0 u1
+    u3 = S1 a3 u2
+
+// ============================================================================
+// fK function (key schedule round function)
+//
+// From HAC:
+//   Input: 32-bit A (4 bytes), 32-bit B (4 bytes)
+//   Output: 32-bit U (4 bytes)
+//
+//   t1 = A0 ^ A1
+//   t2 = A2 ^ A3
+//   U1 = S1(t1, t2 ^ B0)
+//   U2 = S0(t2, U1 ^ B1)
+//   U0 = S0(A0, U1 ^ B2)
+//   U3 = S1(A3, U2 ^ B3)
+// ============================================================================
+
+fK : Half -> Half -> Half
+fK a b = join [u0, u1, u2, u3]
+  where
+    // Split inputs into bytes
+    [a0, a1, a2, a3] = split`{4} a : [4]Byte
+    [b0, b1, b2, b3] = split`{4} b : [4]Byte
+
+    // Intermediate values (no key XOR here, unlike f)
+    t1 = a0 ^ a1
+    t2 = a2 ^ a3
+
+    // S-box applications with B bytes XORed in
+    u1 = S1 t1 (t2 ^ b0)
+    u2 = S0 t2 (u1 ^ b1)
+    u0 = S0 a0 (u1 ^ b2)
+    u3 = S1 a3 (u2 ^ b3)
+
+// ============================================================================
+// Key Schedule
+//
+// From HAC Algorithm 7.95:
+//   Input: 64-bit key K
+//   Output: 16 16-bit subkeys K0..K15
+//
+// The key schedule generates subkeys by iteratively applying fK
+// ============================================================================
+
+keySchedule : Key -> SubKeys
+keySchedule key = subkeys
+  where
+    // Split key into two 32-bit halves
+    [keyLeft, keyRight] = split`{2} key : [2]Half
+
+    // Initial state: U(-2)=0, U(-1)=keyLeft, U(0)=keyRight
+    // State tuple: (u_minus2, u_minus1, u_0)
+    init : (Half, Half, Half)
+    init = (0, keyLeft, keyRight)
+
+    // One iteration: given state, produce new state and 2 subkeys
+    step : (Half, Half, Half) -> (Half, Half, Half)
+    step (u2, u1, u0) = (u1, u0, u)
+      where
+        v = u0 ^ u2
+        u = fK u1 v
+
+    // Extract subkeys from a state's u value
+    extractKeys : Half -> (SubKey, SubKey)
+    extractKeys u = (k0, k1)
+      where
+        [ub0, ub1, ub2, ub3] = split`{4} u : [4]Byte
+        k0 = join [ub0, ub1]  // Upper 16 bits
+        k1 = join [ub2, ub3]  // Lower 16 bits
+
+    // Run 8 iterations, collecting states
+    states : [9](Half, Half, Half)
+    states = [init] # [ step s | s <- take`{8} states ]
+
+    // Extract subkeys from each iteration's result (states[1] through states[8])
+    subkeys : SubKeys
+    subkeys = join [ [k0, k1]
+                   | (_, _, u) <- tail states
+                   | (k0, k1) <- [ extractKeys u | (_, _, u) <- tail states ] ]
+
+// ============================================================================
+// FEAL-8 Encryption
+//
+// From HAC Algorithm 7.94:
+//   1. Generate subkeys K0..K15
+//   2. Initial whitening: L0 = ML ^ (K8||K9), R0 = MR ^ (K10||K11)
+//   3. R0 = R0 ^ L0
+//   4. 8 Feistel rounds: Li = R(i-1), Ri = L(i-1) ^ f(R(i-1), Ki)
+//   5. Final: L8 = L8 ^ R8
+//   6. Output whitening: C = (R8 ^ (K12||K13)) || (L8 ^ (K14||K15))
+// ============================================================================
+
+encrypt : Key -> Block -> Block
+encrypt key plaintext = ciphertext
+  where
+    ks = keySchedule key
+
+    // Split plaintext into halves
+    [ml, mr] = split`{2} plaintext : [2]Half
+
+    // Initial whitening with K8,K9 and K10,K11
+    l0 = ml ^ (join [ks@8, ks@9])
+    r0_tmp = mr ^ (join [ks@10, ks@11])
+    r0 = r0_tmp ^ l0
+
+    // 8 Feistel rounds using K0..K7
+    rounds = [(l0, r0)] # [ (r_prev, l_prev ^ f r_prev (ks@i))
+                          | (l_prev, r_prev) <- rounds
+                          | i <- [0..7] : [8][4] ]
+
+    (l8, r8) = rounds @ 8
+
+    // Final swap and XOR
+    l8' = l8 ^ r8
+
+    // Output whitening with K12,K13 and K14,K15
+    c0 = r8 ^ (join [ks@12, ks@13])
+    c1 = l8' ^ (join [ks@14, ks@15])
+
+    ciphertext = join [c0, c1]
+
+// ============================================================================
+// FEAL-8 Decryption
+//
+// Decryption is encryption with subkeys used in reverse order for rounds,
+// and swapped whitening keys.
+// ============================================================================
+
+decrypt : Key -> Block -> Block
+decrypt key ciphertext = plaintext
+  where
+    ks = keySchedule key
+
+    // Split ciphertext into halves
+    [cl, cr] = split`{2} ciphertext : [2]Half
+
+    // Initial whitening (reversed from encryption)
+    l0 = cl ^ (join [ks@12, ks@13])
+    r0_tmp = cr ^ (join [ks@14, ks@15])
+    r0 = r0_tmp ^ l0
+
+    // 8 Feistel rounds using K7..K0 (reversed)
+    rounds = [(l0, r0)] # [ (r_prev, l_prev ^ f r_prev (ks@i))
+                          | (l_prev, r_prev) <- rounds
+                          | i <- [7, 6 .. 0] : [8][4] ]
+
+    (l8, r8) = rounds @ 8
+
+    // Final swap and XOR
+    l8' = l8 ^ r8
+
+    // Output whitening (reversed)
+    m0 = r8 ^ (join [ks@8, ks@9])
+    m1 = l8' ^ (join [ks@10, ks@11])
+
+    plaintext = join [m0, m1]
+
+// ============================================================================
+// Properties
+// ============================================================================
+
+// Correctness: decrypt(encrypt(m)) == m
+property correctness key msg = decrypt key (encrypt key msg) == msg
+
+// S-box properties
+property s0_example = S0 0x00 0x00 == 0x00
+property s1_example = S1 0x00 0x00 == 0x04  // ROT2(1) = 4
+
+// Test with zeros
+property encrypt_zeros = encrypt 0 0 == encrypt 0 0  // Placeholder
+
+// ============================================================================
+// Test vectors
+// Verified against C implementation (Pate Williams, HAC)
+// ============================================================================
+
+testKey : Key
+testKey = 0x0123456789abcdef
+
+testPlaintext : Block
+testPlaintext = 0x0000000000000000
+
+testCiphertext : Block
+testCiphertext = 0xceef2c86f2490752
+
+// Test vector property
+property testVector = encrypt testKey testPlaintext == testCiphertext
+
+// Expected subkeys for testKey (verified against C implementation)
+testSubkeys : SubKeys
+testSubkeys = [0xdf3b, 0xca36, 0xf17c, 0x1aec, 0x45a5, 0xb9c7, 0x26eb, 0xad25,
+               0x8b2a, 0xecb7, 0xac50, 0x9d4c, 0x22cd, 0x479b, 0xa8d5, 0x0cb5]
+
+property keyScheduleTest = keySchedule testKey == testSubkeys

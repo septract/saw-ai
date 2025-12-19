@@ -7,3 +7,9 @@ junk/
 
 # Generated bitcode (can rebuild with make)
 *.bc
+
+# Test executables
+*_test
+
+# Downloaded third-party source (use make download)
+experiments/*/src/

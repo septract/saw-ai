@@ -1,7 +1,0 @@
-# Third-party source code (downloaded, not version controlled)
-src/
-
-# Generated files
-*.bc
-*.o
-feal8_test
