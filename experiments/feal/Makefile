@@ -1,5 +1,8 @@
 # FEAL-8 SAW Verification
 # Fast Data Encipherment Algorithm (8 rounds)
+#
+# NOTE TO CLAUDE: The primary verification target is the 1989 implementation.
+# DO NOT work on the Williams 1997 verification without explicit user permission.
 
 # Use Homebrew LLVM for SAW compatibility
 CLANG = /opt/homebrew/opt/llvm@18/bin/clang
@@ -89,9 +92,15 @@ test-cryptol: feal8.cry
 # SAW verification
 SAW = $(shell pwd)/../../tools/saw/bin/saw
 
-verify: $(FEAL_BC) feal8.cry feal8_verify.saw
+verify: verify-williams
+
+verify-williams: $(FEAL_BC) feal8.cry feal8_williams_verify.saw
 	@echo "Running SAW verification (Williams 1997 implementation)..."
-	CRYPTOLPATH="../../specs/cryptol-specs" $(SAW) feal8_verify.saw
+	CRYPTOLPATH="../../specs/cryptol-specs" $(SAW) feal8_williams_verify.saw
+
+verify-1989: $(FEAL_1989_BC) feal8.cry feal8_1989_verify.saw
+	@echo "Running SAW verification (1989 implementation - challenge)..."
+	CRYPTOLPATH="../../specs/cryptol-specs" $(SAW) feal8_1989_verify.saw
 
 clean:
 	rm -f $(FEAL_BC) $(FEAL_1989_BC) feal8_test feal8_1989_test *.bc
