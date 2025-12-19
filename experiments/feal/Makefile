@@ -86,10 +86,12 @@ test-cryptol: feal8.cry
 	$(CRYPTOL) feal8.cry -c ":check correctness"
 	@echo "All Cryptol tests passed!"
 
-# SAW verification (to be implemented)
-verify: $(FEAL_BC) feal8.cry
-	@echo "SAW symbolic verification not yet implemented"
-	@echo "Run 'make test-cryptol' for Cryptol specification tests"
+# SAW verification
+SAW = $(shell pwd)/../../tools/saw/bin/saw
+
+verify: $(FEAL_BC) feal8.cry feal8_verify.saw
+	@echo "Running SAW verification (Williams 1997 implementation)..."
+	CRYPTOLPATH="../../specs/cryptol-specs" $(SAW) feal8_verify.saw
 
 clean:
 	rm -f $(FEAL_BC) $(FEAL_1989_BC) feal8_test feal8_1989_test *.bc

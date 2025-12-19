@@ -1,0 +1,386 @@
+/*
+ * FEAL-8 SAW Verification
+ * Stage 1: Verify Sd (S-box) primitive
+ *
+ * C function: long Sd(long d, long x, long y)
+ * Cryptol:    S0, S1 : Byte -> Byte -> Byte
+ */
+
+// Load Cryptol specification
+import "feal8.cry";
+
+// Load LLVM bitcode (Williams 1997 implementation)
+m <- llvm_load_module "feal8.bc";
+
+// ============================================================================
+// Helper: Unified S-box specification
+// Matches the C function Sd(d, x, y) where d ∈ {0, 1}
+// ============================================================================
+
+// Cryptol wrapper to match C interface
+let {{
+  // Sd combines S0 and S1 based on d parameter
+  Sd : [64] -> [64] -> [64] -> [64]
+  Sd d x y = zext (if d == 0 then S0 x' y' else S1 x' y')
+    where
+      x' = drop`{56} x : Byte
+      y' = drop`{56} y : Byte
+
+  // Bound for 32-bit values (to avoid overflow in Sd)
+  MAX_32BIT : [64]
+  MAX_32BIT = 1 << 32
+}};
+
+// ============================================================================
+// Specification for Sd function
+// ============================================================================
+
+// Sd spec with byte preconditions (for initial verification)
+let Sd_spec : CrucibleSetup () = do {
+    // Symbolic inputs (64-bit long on this platform)
+    d <- llvm_fresh_var "d" (llvm_int 64);
+    x <- llvm_fresh_var "x" (llvm_int 64);
+    y <- llvm_fresh_var "y" (llvm_int 64);
+
+    // Precondition: d is 0 or 1
+    llvm_precond {{ d == 0 \/ d == 1 }};
+
+    // Precondition: x and y are byte-sized (0-255)
+    llvm_precond {{ x < 256 }};
+    llvm_precond {{ y < 256 }};
+
+    // Execute the function
+    llvm_execute_func [llvm_term d, llvm_term x, llvm_term y];
+
+    // Return value matches Cryptol spec
+    llvm_return (llvm_term {{ Sd d x y }});
+};
+
+// Sd spec with relaxed preconditions - for use as override in key schedule
+// C's Sd does (x + y + d) % 256 internally, but has signed overflow UB.
+// Key schedule values come from bit shifts, so they fit in 32 bits.
+let Sd_override_spec : CrucibleSetup () = do {
+    d <- llvm_fresh_var "d" (llvm_int 64);
+    x <- llvm_fresh_var "x" (llvm_int 64);
+    y <- llvm_fresh_var "y" (llvm_int 64);
+
+    // d must be 0 or 1
+    llvm_precond {{ d == 0 \/ d == 1 }};
+
+    // Values must be non-negative and fit in 32 bits (prevents signed overflow)
+    // Key schedule produces values from bit shifts which satisfy this
+    llvm_precond {{ x < MAX_32BIT }};
+    llvm_precond {{ y < MAX_32BIT }};
+
+    llvm_execute_func [llvm_term d, llvm_term x, llvm_term y];
+
+    // Result - truncate inputs to bytes like C does
+    llvm_return (llvm_term {{ Sd d x y }});
+};
+
+// ============================================================================
+// Verification
+// ============================================================================
+
+print "=== FEAL-8 Verification Stage 1: Sd Primitive ===";
+print "";
+
+print "Verifying Sd (S-box) function...";
+llvm_verify m "Sd" [] false Sd_spec z3;
+
+print "";
+print "Stage 1 Complete: Sd VERIFIED";
+print "";
+
+// ============================================================================
+// Stage 2: Verify f function (round function)
+//
+// C: void f(long *A, long *Y, long *U)
+//    A[4] = input bytes, Y[2] = subkey bytes, U[4] = output bytes
+//
+// Cryptol: f : Half -> SubKey -> Half
+//    Half = [32], SubKey = [16]
+// ============================================================================
+
+// Cryptol wrapper to work with array representation
+let {{
+  // Convert 4 longs (each holding a byte) to a Half (32-bit)
+  longsToHalf : [4][64] -> Half
+  longsToHalf xs = join [ drop`{56} x : Byte | x <- xs ]
+
+  // Convert 2 longs (each holding a byte) to a SubKey (16-bit)
+  longsToSubKey : [2][64] -> SubKey
+  longsToSubKey xs = join [ drop`{56} x : Byte | x <- xs ]
+
+  // Convert Half (32-bit) to 4 longs (each holding a byte)
+  halfToLongs : Half -> [4][64]
+  halfToLongs h = [ zext b : [64] | b <- split`{4} h : [4]Byte ]
+}};
+
+let f_spec : CrucibleSetup () = do {
+    // Input array A[4] - 4 bytes stored as longs
+    a0 <- llvm_fresh_var "a0" (llvm_int 64);
+    a1 <- llvm_fresh_var "a1" (llvm_int 64);
+    a2 <- llvm_fresh_var "a2" (llvm_int 64);
+    a3 <- llvm_fresh_var "a3" (llvm_int 64);
+
+    // Subkey array Y[2] - 2 bytes stored as longs
+    y0 <- llvm_fresh_var "y0" (llvm_int 64);
+    y1 <- llvm_fresh_var "y1" (llvm_int 64);
+
+    // Preconditions: all values are byte-sized
+    llvm_precond {{ a0 < 256 }};
+    llvm_precond {{ a1 < 256 }};
+    llvm_precond {{ a2 < 256 }};
+    llvm_precond {{ a3 < 256 }};
+    llvm_precond {{ y0 < 256 }};
+    llvm_precond {{ y1 < 256 }};
+
+    // Allocate arrays
+    pA <- llvm_alloc (llvm_array 4 (llvm_int 64));
+    pY <- llvm_alloc (llvm_array 2 (llvm_int 64));
+    pU <- llvm_alloc (llvm_array 4 (llvm_int 64));
+
+    // Initialize input arrays
+    llvm_points_to pA (llvm_term {{ [a0, a1, a2, a3] : [4][64] }});
+    llvm_points_to pY (llvm_term {{ [y0, y1] : [2][64] }});
+
+    // Execute the function
+    llvm_execute_func [pA, pY, pU];
+
+    // Compute expected output using Cryptol spec
+    let a_half = {{ longsToHalf [a0, a1, a2, a3] }};
+    let y_subkey = {{ longsToSubKey [y0, y1] }};
+    let result = {{ f a_half y_subkey }};
+
+    // Output array matches Cryptol spec
+    llvm_points_to pU (llvm_term {{ halfToLongs result }});
+};
+
+print "=== Stage 2: f Function (Round Function) ===";
+print "";
+
+// Use Sd as override (compositional verification)
+Sd_ov <- llvm_verify m "Sd" [] false Sd_spec z3;
+
+print "Verifying f function with Sd override...";
+llvm_verify m "f" [Sd_ov] false f_spec z3;
+
+print "";
+print "Stage 2 Complete: f VERIFIED";
+print "";
+
+// ============================================================================
+// Stage 3: Verify fK function (key schedule round function)
+//
+// C: void fK(long *A, long *B, long *U)
+//    A[4], B[4] = input bytes, U[4] = output bytes
+//
+// Cryptol: fK : Half -> Half -> Half
+// ============================================================================
+
+// fK spec with byte-size preconditions (for initial verification)
+let fK_spec : CrucibleSetup () = do {
+    // Input array A[4] - 4 bytes stored as longs
+    a0 <- llvm_fresh_var "a0" (llvm_int 64);
+    a1 <- llvm_fresh_var "a1" (llvm_int 64);
+    a2 <- llvm_fresh_var "a2" (llvm_int 64);
+    a3 <- llvm_fresh_var "a3" (llvm_int 64);
+
+    // Input array B[4] - 4 bytes stored as longs
+    b0 <- llvm_fresh_var "b0" (llvm_int 64);
+    b1 <- llvm_fresh_var "b1" (llvm_int 64);
+    b2 <- llvm_fresh_var "b2" (llvm_int 64);
+    b3 <- llvm_fresh_var "b3" (llvm_int 64);
+
+    // Preconditions: all values are byte-sized
+    llvm_precond {{ a0 < 256 }};
+    llvm_precond {{ a1 < 256 }};
+    llvm_precond {{ a2 < 256 }};
+    llvm_precond {{ a3 < 256 }};
+    llvm_precond {{ b0 < 256 }};
+    llvm_precond {{ b1 < 256 }};
+    llvm_precond {{ b2 < 256 }};
+    llvm_precond {{ b3 < 256 }};
+
+    // Allocate arrays
+    pA <- llvm_alloc (llvm_array 4 (llvm_int 64));
+    pB <- llvm_alloc (llvm_array 4 (llvm_int 64));
+    pU <- llvm_alloc (llvm_array 4 (llvm_int 64));
+
+    // Initialize input arrays
+    llvm_points_to pA (llvm_term {{ [a0, a1, a2, a3] : [4][64] }});
+    llvm_points_to pB (llvm_term {{ [b0, b1, b2, b3] : [4][64] }});
+
+    // Execute the function
+    llvm_execute_func [pA, pB, pU];
+
+    // Compute expected output using Cryptol spec
+    let a_half = {{ longsToHalf [a0, a1, a2, a3] }};
+    let b_half = {{ longsToHalf [b0, b1, b2, b3] }};
+    let result = {{ fK a_half b_half }};
+
+    // Output array matches Cryptol spec
+    llvm_points_to pU (llvm_term {{ halfToLongs result }});
+};
+
+// fK spec with relaxed preconditions - for use as override in key schedule
+// Values must fit in 32 bits to avoid signed overflow in Sd
+let fK_override_spec : CrucibleSetup () = do {
+    // Input arrays - constrained to 32-bit values (not just bytes)
+    a0 <- llvm_fresh_var "a0" (llvm_int 64);
+    a1 <- llvm_fresh_var "a1" (llvm_int 64);
+    a2 <- llvm_fresh_var "a2" (llvm_int 64);
+    a3 <- llvm_fresh_var "a3" (llvm_int 64);
+
+    b0 <- llvm_fresh_var "b0" (llvm_int 64);
+    b1 <- llvm_fresh_var "b1" (llvm_int 64);
+    b2 <- llvm_fresh_var "b2" (llvm_int 64);
+    b3 <- llvm_fresh_var "b3" (llvm_int 64);
+
+    // Values must fit in 32 bits (prevents signed overflow in Sd)
+    llvm_precond {{ a0 < MAX_32BIT }};
+    llvm_precond {{ a1 < MAX_32BIT }};
+    llvm_precond {{ a2 < MAX_32BIT }};
+    llvm_precond {{ a3 < MAX_32BIT }};
+    llvm_precond {{ b0 < MAX_32BIT }};
+    llvm_precond {{ b1 < MAX_32BIT }};
+    llvm_precond {{ b2 < MAX_32BIT }};
+    llvm_precond {{ b3 < MAX_32BIT }};
+
+    // Allocate arrays
+    pA <- llvm_alloc (llvm_array 4 (llvm_int 64));
+    pB <- llvm_alloc (llvm_array 4 (llvm_int 64));
+    pU <- llvm_alloc (llvm_array 4 (llvm_int 64));
+
+    // Initialize input arrays
+    llvm_points_to pA (llvm_term {{ [a0, a1, a2, a3] : [4][64] }});
+    llvm_points_to pB (llvm_term {{ [b0, b1, b2, b3] : [4][64] }});
+
+    // Execute the function
+    llvm_execute_func [pA, pB, pU];
+
+    // Compute expected output - truncate to bytes like C does
+    let a_half = {{ longsToHalf [a0, a1, a2, a3] }};
+    let b_half = {{ longsToHalf [b0, b1, b2, b3] }};
+    let result = {{ fK a_half b_half }};
+
+    // Output array matches Cryptol spec
+    llvm_points_to pU (llvm_term {{ halfToLongs result }});
+};
+
+print "=== Stage 3: fK Function (Key Schedule Round) ===";
+print "";
+
+print "Verifying fK function with Sd override...";
+llvm_verify m "fK" [Sd_ov] false fK_spec z3;
+
+// Verify unconstrained Sd (for use with unconstrained fK)
+print "Verifying Sd (unconstrained) for use as override...";
+Sd_override_ov <- llvm_verify m "Sd" [] false Sd_override_spec z3;
+
+// Verify unconstrained fK (for use as override in key schedule)
+print "Verifying fK (unconstrained) for use as override...";
+fK_ov <- llvm_verify m "fK" [Sd_override_ov] false fK_override_spec z3;
+
+print "";
+print "=== Stage 3 Complete: fK VERIFIED ===";
+print "";
+print "=== All Primitives VERIFIED ===";
+print "";
+
+// ============================================================================
+// Stage 4: Key Schedule Unroll Lemma
+//
+// The key schedule runs 8 iterations of fK. We need to prove that
+// keySchedule can be unrolled to explicit fK applications, then use
+// that in a simpset for verification.
+// ============================================================================
+
+print "=== Stage 4: Key Schedule Unroll Lemma ===";
+print "";
+
+// First, define helper functions for the unrolled key schedule
+let {{
+  // One step of the key schedule state machine
+  ksStep : (Half, Half, Half) -> (Half, Half, Half)
+  ksStep (u2, u1, u0) = (u1, u0, fK u1 (u0 ^ u2))
+
+  // Extract subkeys from a Half
+  extractSubKeys : Half -> (SubKey, SubKey)
+  extractSubKeys u = (take`{16} u, drop`{16} u)
+
+  // Unrolled key schedule: 8 explicit iterations
+  keyScheduleUnrolled : Key -> SubKeys
+  keyScheduleUnrolled key = subkeys
+    where
+      [kL, kR] = split`{2} key : [2]Half
+
+      // Explicit unroll of 8 iterations
+      (_, _, u1) = ksStep (0, kL, kR)
+      (_, _, u2) = ksStep (kL, kR, u1)
+      (_, _, u3) = ksStep (kR, u1, u2)
+      (_, _, u4) = ksStep (u1, u2, u3)
+      (_, _, u5) = ksStep (u2, u3, u4)
+      (_, _, u6) = ksStep (u3, u4, u5)
+      (_, _, u7) = ksStep (u4, u5, u6)
+      (_, _, u8) = ksStep (u5, u6, u7)
+
+      // Extract subkeys
+      (k0, k1)   = extractSubKeys u1
+      (k2, k3)   = extractSubKeys u2
+      (k4, k5)   = extractSubKeys u3
+      (k6, k7)   = extractSubKeys u4
+      (k8, k9)   = extractSubKeys u5
+      (k10, k11) = extractSubKeys u6
+      (k12, k13) = extractSubKeys u7
+      (k14, k15) = extractSubKeys u8
+
+      subkeys = [k0, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k12, k13, k14, k15]
+}};
+
+print "Proving key schedule unroll lemma (fK uninterpreted)...";
+
+// Prove the unroll lemma with fK uninterpreted
+unroll_keyschedule <- prove_print
+    (w4_unint_z3 ["fK"])
+    {{ \key -> keySchedule key == keyScheduleUnrolled key }};
+
+print "   Key schedule unroll lemma: PROVED";
+print "";
+
+// Build simpset with the unroll lemma
+let ss = cryptol_ss ();
+let ss_with_unroll = addsimps [unroll_keyschedule] ss;
+
+// ============================================================================
+// Stage 5: Key Schedule Verification - CHALLENGE PROBLEM
+//
+// BLOCKER: SAW's override matching can't handle this case.
+// The fK_ov override uses llvm_alloc + llvm_points_to with fresh symbolic
+// variables. But FEAL_key_schedule calls fK with stack-allocated arrays
+// containing computed expressions (bit shifts of key0/key1).
+//
+// SAW needs to match fresh symbolic patterns against concrete expressions,
+// which fails with "Fresh variable(s) not reachable via points-tos".
+//
+// Possible solutions:
+//   1. Verify without overrides (direct symbolic execution through fK/Sd)
+//   2. Use experimental features like llvm_alloc_sym_init
+//   3. Refactor C code to pass arrays allocated by caller (violates rules)
+//
+// This is left as a challenge for advanced SAW users.
+// ============================================================================
+
+print "=== Summary ===";
+print "";
+print "  Sd (S-box)      : VERIFIED (24 bits symbolic)";
+print "  f  (round)      : VERIFIED (48 bits symbolic, compositional)";
+print "  fK (key round)  : VERIFIED (64 bits symbolic, compositional)";
+print "  Unroll Lemma    : PROVED   (fK uninterpreted)";
+print "";
+print "  Key Schedule    : BLOCKED  (override matching challenge)";
+print "  Encryption      : TODO     (depends on key schedule)";
+print "  Decryption      : TODO     (depends on key schedule)";
+print "";
+print "=== FEAL-8 Primitive Verification Complete ===";
