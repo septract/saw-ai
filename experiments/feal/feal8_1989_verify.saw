@@ -12,8 +12,9 @@
  * Cryptol spec: feal8.cry
  */
 
-// Load Cryptol specification
-import "feal8.cry";
+// Load Cryptol specifications
+import "feal8.cry";       // HAC-based spec (S0, S1, ROT2, etc.)
+import "feal8_1989.cry";  // 1989-specific little-endian functions (FK_1989, f_1989, etc.)
 
 // Load LLVM bitcode (1989 implementation)
 m <- llvm_load_module "feal8_1989.bc";
@@ -174,58 +175,11 @@ print "";
 // Types: HalfWord = unsigned long (64-bit), QuarterWord = unsigned int (32-bit)
 // Bug: union only sets low 32 bits, but returns full 64 bits.
 
-// Cryptol helper: f function with little-endian byte access
-let {{
-  // Extract byte from 32-bit value (little-endian: byte 0 = LSB)
-  byte32 : [32] -> [2] -> [8]
-  byte32 val i = drop`{24} (val >> (8 * (zext i : [32])))
-
-  // f function matching C's little-endian union access
-  f_1989 : [64] -> [32] -> [64]
-  f_1989 aa bb = result
-    where
-      // Extract low 32 bits of AA (HalfWord is 64-bit, union uses low 32)
-      a_low = drop`{32} aa : [32]
-
-      // Extract bytes from A in little-endian order
-      a0 = byte32 a_low 0  // A.Byte[0] = bits 0-7
-      a1 = byte32 a_low 1  // A.Byte[1] = bits 8-15
-      a2 = byte32 a_low 2  // A.Byte[2] = bits 16-23
-      a3 = byte32 a_low 3  // A.Byte[3] = bits 24-31
-
-      // Extract bytes from B (QuarterWord = 32-bit)
-      b0 = byte32 bb 0  // B.Byte[0]
-      b1 = byte32 bb 1  // B.Byte[1]
-
-      // C code logic:
-      // f1 = A.Byte[1] ^ B.Byte[0] ^ A.Byte[0]
-      // f2 = A.Byte[2] ^ B.Byte[1] ^ A.Byte[3]
-      f1_init = a1 ^ b0 ^ a0
-      f2_init = a2 ^ b1 ^ a3
-
-      // f1 = S1(f1, f2)
-      // f2 = S0(f2, f1)
-      f1 = S1 f1_init f2_init
-      f2 = S0 f2_init f1
-
-      // RetVal.Byte[0] = S0(A.Byte[0], f1)
-      // RetVal.Byte[1] = f1
-      // RetVal.Byte[2] = f2
-      // RetVal.Byte[3] = S1(A.Byte[3], f2)
-      r0 = S0 a0 f1
-      r1 = f1
-      r2 = f2
-      r3 = S1 a3 f2
-
-      // Reassemble in little-endian order (byte 0 = LSB)
-      result = zext (r3 # r2 # r1 # r0) : [64]
-}};
+// f_1989 is imported from feal8_1989.cry
 
 // f specification with globals (needed for S0/S1 overrides to match)
-// NOTE: The C code has a subtle bug - it uses union { unsigned long All; ByteType Byte[4]; }
-// but on 64-bit systems, unsigned long is 8 bytes while only 4 bytes are set.
-// The return value has undefined high 32 bits. We work around this by
-// using llvm_postcond to only verify the low 32 bits match.
+// NOTE: The C code was modified with portability fixes (zero-initialized unions).
+// Original 1989 code had undefined high 32 bits on LP64 systems.
 let f_spec : CrucibleSetup () = do {
     // Set up Rot2's static state
     llvm_alloc_global "Rot2.First";
@@ -243,10 +197,8 @@ let f_spec : CrucibleSetup () = do {
     llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 0 : [32] }});
     llvm_points_to (llvm_global "Rot2.RetVal") (llvm_term {{ rot2Table }});
 
-    // Return value: only check low 32 bits (high 32 bits are undefined in C code)
-    ret <- llvm_fresh_var "ret" (llvm_int 64);
-    llvm_return (llvm_term ret);
-    llvm_postcond {{ (drop`{32} ret : [32]) == (drop`{32} (f_1989 aa bb) : [32]) }};
+    // Return value: full 64-bit match (portability fix ensures high bits are zero)
+    llvm_return (llvm_term {{ f_1989 aa bb }});
 };
 
 // Note: Using Rot2_ov directly instead of S0_ov/S1_ov
@@ -277,52 +229,9 @@ print "";
 print "=== Stage 4: FK (key schedule round) ===";
 print "";
 
-// FK has the same union structure as f - same 64-bit bug applies.
+// FK has the same union structure as f - fixed with zero-initialization.
 // FK(AA, BB): both inputs are HalfWord (64-bit), returns HalfWord
-
-// Cryptol helper: FK function with little-endian byte access
-let {{
-  // FK function matching C's little-endian union access
-  FK_1989 : [64] -> [64] -> [64]
-  FK_1989 aa bb = result
-    where
-      // Extract low 32 bits
-      a_low = drop`{32} aa : [32]
-      b_low = drop`{32} bb : [32]
-
-      // Extract bytes in little-endian order
-      a0 = byte32 a_low 0
-      a1 = byte32 a_low 1
-      a2 = byte32 a_low 2
-      a3 = byte32 a_low 3
-      b0 = byte32 b_low 0
-      b1 = byte32 b_low 1
-      b2 = byte32 b_low 2
-      b3 = byte32 b_low 3
-
-      // C code logic:
-      // FK1 = A.Byte[1] ^ A.Byte[0]
-      // FK2 = A.Byte[2] ^ A.Byte[3]
-      fk1_init = a1 ^ a0
-      fk2_init = a2 ^ a3
-
-      // FK1 = S1(FK1, FK2 ^ B.Byte[0])
-      // FK2 = S0(FK2, FK1 ^ B.Byte[1])
-      fk1 = S1 fk1_init (fk2_init ^ b0)
-      fk2 = S0 fk2_init (fk1 ^ b1)
-
-      // RetVal.Byte[0] = S0(A.Byte[0], FK1 ^ B.Byte[2])
-      // RetVal.Byte[1] = FK1
-      // RetVal.Byte[2] = FK2
-      // RetVal.Byte[3] = S1(A.Byte[3], FK2 ^ B.Byte[3])
-      r0 = S0 a0 (fk1 ^ b2)
-      r1 = fk1
-      r2 = fk2
-      r3 = S1 a3 (fk2 ^ b3)
-
-      // Reassemble in little-endian order
-      result = zext (r3 # r2 # r1 # r0) : [64]
-}};
+// FK_1989 is imported from feal8_1989.cry
 
 // FK specification
 let FK_spec : CrucibleSetup () = do {
@@ -342,10 +251,8 @@ let FK_spec : CrucibleSetup () = do {
     llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 0 : [32] }});
     llvm_points_to (llvm_global "Rot2.RetVal") (llvm_term {{ rot2Table }});
 
-    // Return value: only check low 32 bits
-    ret <- llvm_fresh_var "ret" (llvm_int 64);
-    llvm_return (llvm_term ret);
-    llvm_postcond {{ (drop`{32} ret : [32]) == (drop`{32} (FK_1989 aa bb) : [32]) }};
+    // Return value: full 64-bit match (portability fix ensures high bits are zero)
+    llvm_return (llvm_term {{ FK_1989 aa bb }});
 };
 
 // Enable lax loads for FK (same 64-bit union bug)
@@ -365,16 +272,72 @@ print "";
 // Writes to global state: K[16], K89, K1011, K1213, K1415
 //
 // Cryptol: keySchedule : Key -> SubKeys
+//
+// Strategy: Compositional verification using FK_ov override.
+// The 1989 code passes FK arguments by value (HalfWord = 64-bit integer),
+// so the FK override should match. This makes verification fast.
 // ============================================================================
 
 print "=== Stage 5: SetKey (key schedule with globals) ===";
 print "";
 
-// TODO: Verify SetKey
-// Challenge: Function writes to global variables.
-// SAW needs llvm_alloc_global for each global.
+// keySchedule_1989, computeWhiteningKeys, FK_1989 imported from feal8_1989.cry at top
 
-print "  SetKey: TODO";
+// SetKey specification
+let SetKey_spec : CrucibleSetup () = do {
+    // Set up Rot2's static state (needed for FK's S0/S1 calls)
+    llvm_alloc_global "Rot2.First";
+    llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 0 : [32] }});
+    llvm_alloc_global "Rot2.RetVal";
+    llvm_points_to (llvm_global "Rot2.RetVal") (llvm_term {{ rot2Table }});
+
+    // Input: 8-byte key
+    kp <- llvm_alloc_readonly (llvm_array 8 (llvm_int 8));
+    key_bytes <- llvm_fresh_var "key_bytes" (llvm_array 8 (llvm_int 8));
+    llvm_points_to kp (llvm_term key_bytes);
+
+    // Output globals (allocate before execution)
+    llvm_alloc_global "K";
+    llvm_alloc_global "K89";
+    llvm_alloc_global "K1011";
+    llvm_alloc_global "K1213";
+    llvm_alloc_global "K1415";
+
+    llvm_execute_func [kp];
+
+    // Compute expected key schedule
+    // keySchedule_1989 returns [16][16], need to zext to [16][32] for C's unsigned int
+    // computeWhiteningKeys returns [32], need to zext to [64] for C's unsigned long
+    let expected_ks = {{ keySchedule_1989 key_bytes }};
+    let wk = {{ computeWhiteningKeys expected_ks }};
+
+    // K[16]: Each is unsigned int (32-bit), portability fix ensures high 16 bits are zero
+    let c_k_arr = {{ [ zext k : [32] | k <- expected_ks ] }};
+    llvm_points_to (llvm_global "K") (llvm_term c_k_arr);
+
+    // Whitening keys: 64-bit HalfWords, portability fix ensures high 32 bits are zero
+    llvm_points_to (llvm_global "K89") (llvm_term {{ zext wk.0 : [64] }});
+    llvm_points_to (llvm_global "K1011") (llvm_term {{ zext wk.1 : [64] }});
+    llvm_points_to (llvm_global "K1213") (llvm_term {{ zext wk.2 : [64] }});
+    llvm_points_to (llvm_global "K1415") (llvm_term {{ zext wk.3 : [64] }});
+};
+
+// Note: With portability fixes, lax loads may not be strictly necessary,
+// but we keep it for any remaining partial reads in helper functions.
+enable_lax_loads_and_stores;
+
+print "Verifying SetKey (compositional with FK override)...";
+
+// The 1989 code passes FK arguments by value (HalfWord = 64-bit integer),
+// not via pointers. This means FK_ov should match the call sites.
+//
+// Keep FK_1989 uninterpreted so the solver just verifies structure matches
+// without reasoning through FK internals.
+SetKey_ov <- llvm_verify m "SetKey" [Rot2_ov, FK_ov] false SetKey_spec
+    (w4_unint_z3 ["FK_1989", "S0", "S1"]);
+print "  SetKey: VERIFIED";
+
+disable_lax_loads_and_stores;
 print "";
 
 // ============================================================================

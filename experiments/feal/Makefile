@@ -8,10 +8,13 @@
 CLANG = /opt/homebrew/opt/llvm@18/bin/clang
 CLANG_FLAGS = -emit-llvm -c -g -O0
 
-# Source files (in src/ directory - gitignored, download with make download)
+# Source files
+# Williams 1997: downloaded to src/ (gitignored), use 'make download'
+# 1989 portable: checked into repo with LP64 portability fixes
+#   (see docs/feal8-1989-verification.md and PROVENANCE.md)
 SRC_DIR = src
 FEAL_SRC = $(SRC_DIR)/feal8.c
-FEAL_1989_SRC = $(SRC_DIR)/feal8_1989.c
+FEAL_1989_SRC = feal8_1989_portable.c
 
 # Bitcode files
 FEAL_BC = feal8.bc
