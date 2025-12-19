@@ -1,0 +1,300 @@
+// AES-128 Full Encryption Verification with SYMBOLIC KEY
+//
+// This extends aes_verify_encrypt_unint.saw to use a fully symbolic key schedule,
+// proving correctness for ALL possible key schedules.
+//
+// Combined with aes_verify_keysetup.saw (which proves key expansion correct for
+// all keys), this gives complete coverage:
+//   1. For all keys k: aes_key_setup(k) == keyExpansion(k)  [keysetup proof]
+//   2. For all key schedules w: aes_encrypt(pt, w) == cipher(w, pt)  [this proof]
+//   Therefore: For all keys k and plaintexts pt, the implementation is correct.
+
+m <- llvm_load_module "aes.bc";
+
+import "../../../specs/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/Instantiations/AES128.cry";
+
+print "=== AES-128 Verification with SYMBOLIC KEY ===";
+print "";
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 1: Verify Primitives and Capture as Overrides
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 1: Verifying Primitives (capturing specs for overrides)";
+print "============================================================";
+print "";
+
+let state_type = llvm_array 4 (llvm_array 4 (llvm_int 8));
+
+// 1. SubBytes
+print "Verifying SubBytes...";
+let SubBytes_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ SubBytes state_in }});
+};
+SubBytes_ov <- llvm_verify m "SubBytes" [] false SubBytes_spec z3;
+print "   SubBytes: VERIFIED";
+
+// 2. InvSubBytes
+print "Verifying InvSubBytes...";
+let InvSubBytes_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ InvSubBytes state_in }});
+};
+InvSubBytes_ov <- llvm_verify m "InvSubBytes" [] false InvSubBytes_spec z3;
+print "   InvSubBytes: VERIFIED";
+
+// 3. ShiftRows
+print "Verifying ShiftRows...";
+let ShiftRows_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ ShiftRows state_in }});
+};
+ShiftRows_ov <- llvm_verify m "ShiftRows" [] false ShiftRows_spec z3;
+print "   ShiftRows: VERIFIED";
+
+// 4. InvShiftRows
+print "Verifying InvShiftRows...";
+let InvShiftRows_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ InvShiftRows state_in }});
+};
+InvShiftRows_ov <- llvm_verify m "InvShiftRows" [] false InvShiftRows_spec z3;
+print "   InvShiftRows: VERIFIED";
+
+// 5. MixColumns
+print "Verifying MixColumns...";
+let MixColumns_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ MixColumns state_in }});
+};
+MixColumns_ov <- llvm_verify m "MixColumns" [] false MixColumns_spec z3;
+print "   MixColumns: VERIFIED";
+
+// 6. InvMixColumns
+print "Verifying InvMixColumns...";
+let InvMixColumns_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+    llvm_execute_func [state_ptr];
+    llvm_points_to state_ptr (llvm_term {{ InvMixColumns state_in }});
+};
+InvMixColumns_ov <- llvm_verify m "InvMixColumns" [] false InvMixColumns_spec z3;
+print "   InvMixColumns: VERIFIED";
+
+// 7. AddRoundKey
+print "Verifying AddRoundKey...";
+let AddRoundKey_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    key_ptr <- llvm_alloc_readonly (llvm_array 4 (llvm_int 32));
+    key_in <- llvm_fresh_var "key_in" (llvm_array 4 (llvm_int 32));
+    llvm_points_to key_ptr (llvm_term key_in);
+
+    llvm_execute_func [state_ptr, key_ptr];
+
+    // C key format: [4][32] big-endian words -> Cryptol RoundKey: [4][4][8]
+    let cryptol_key = {{ transpose [ split w | w <- key_in ] }};
+    llvm_points_to state_ptr (llvm_term {{ AddRoundKey cryptol_key state_in }});
+};
+AddRoundKey_ov <- llvm_verify m "AddRoundKey" [] false AddRoundKey_spec z3;
+print "   AddRoundKey: VERIFIED";
+
+print "";
+print "All primitives verified and captured as overrides.";
+print "";
+
+let all_overrides = [SubBytes_ov, InvSubBytes_ov, ShiftRows_ov, InvShiftRows_ov,
+                     MixColumns_ov, InvMixColumns_ov, AddRoundKey_ov];
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 2: Prove Cipher Unroll Lemmas
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 2: Proving Cipher Unroll Lemmas (AES-128: 10 rounds)";
+print "============================================================";
+print "";
+
+print "Proving cipher unrolls to 10 explicit rounds...";
+
+unroll_cipher_128 <- prove_print
+    (w4_unint_z3 ["AddRoundKey", "MixColumns", "SubBytes", "ShiftRows"])
+    {{ \w pt -> cipher w pt ==
+    (stateToMsg (AddRoundKey (w@10) (ShiftRows (SubBytes (t 9 (t 8 (t 7 (t 6 (t 5 (t 4 (t 3 (t 2 (t 1 (AddRoundKey (w@0) (msgToState pt))))))))))))))
+        where
+        t i state = AddRoundKey (w@i) (MixColumns (ShiftRows (SubBytes state))))
+    }};
+
+print "   Cipher unroll lemma: PROVED";
+
+print "Proving invCipher unrolls to 10 explicit rounds...";
+
+unroll_invCipher_128 <- prove_print
+    (w4_unint_z3 ["AddRoundKey", "InvMixColumns", "InvSubBytes", "InvShiftRows"])
+    {{ \w ct -> invCipher w ct ==
+    (stateToMsg (AddRoundKey (w@0) (InvSubBytes (InvShiftRows (t 1 (t 2 (t 3 (t 4 (t 5 (t 6 (t 7 (t 8 (t 9 (AddRoundKey (w@10) (msgToState ct))))))))))))))
+        where
+        t i state = InvMixColumns (AddRoundKey (w@i) (InvSubBytes (InvShiftRows state))))
+    }};
+
+print "   InvCipher unroll lemma: PROVED";
+print "";
+
+let ss = cryptol_ss ();
+let ss_with_both = addsimps [unroll_cipher_128, unroll_invCipher_128] ss;
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 3: Verify aes_encrypt with SYMBOLIC KEY SCHEDULE
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 3: Full AES-128 Encryption with SYMBOLIC KEY SCHEDULE";
+print "============================================================";
+print "";
+
+print "Verifying aes_encrypt with symbolic plaintext AND symbolic key schedule...";
+print "This proves correctness for ALL possible key schedules (44 words = 1408 bits)";
+print "";
+
+// Helper to convert C key schedule format to Cryptol format
+// C: [44][32] - 44 words, each is big-endian packed column
+// Cryptol: [11][4][4][8] - 11 round keys, each 4x4 bytes
+//
+// For round i, the C code uses w[i*4] through w[i*4+3]
+// Each word w[j] contains one column: w[j] = col[0] # col[1] # col[2] # col[3]
+
+let aes_encrypt_symbolic_key_spec = do {
+    // Symbolic plaintext: 16 bytes (128 bits symbolic)
+    in_ptr <- llvm_alloc_readonly (llvm_array 16 (llvm_int 8));
+    plaintext <- llvm_fresh_var "plaintext" (llvm_array 16 (llvm_int 8));
+    llvm_points_to in_ptr (llvm_term plaintext);
+
+    // Output ciphertext: 16 bytes
+    out_ptr <- llvm_alloc (llvm_array 16 (llvm_int 8));
+
+    // SYMBOLIC key schedule: 44 words (1408 bits symbolic!)
+    key_ptr <- llvm_alloc_readonly (llvm_array 44 (llvm_int 32));
+    c_key_schedule <- llvm_fresh_var "key_schedule" (llvm_array 44 (llvm_int 32));
+    llvm_points_to key_ptr (llvm_term c_key_schedule);
+
+    // Keysize = 128
+    llvm_execute_func [in_ptr, out_ptr, key_ptr, llvm_term {{ 128 : [32] }}];
+
+    // Convert C key schedule to Cryptol format for the spec
+    // Group into 11 round keys of 4 words each, then convert each word to column bytes
+    let cryptol_key_schedule = {{
+        [ [ transpose [ split w | w <- rk ] | rk <- split`{11} c_key_schedule ]
+        ] @@ [0..10]
+    }};
+
+    // Actually, simpler: each group of 4 words is one round key
+    // w[i*4+j] is column j of round key i, and split gives [col0, col1, col2, col3]
+    // transpose gives rows
+    let cryptol_ks = {{
+        [ transpose [ split w | w <- rk ] | rk <- split`{11} c_key_schedule ]
+    }};
+
+    let expected_ct = {{ cipher cryptol_ks (join plaintext) }};
+    llvm_points_to out_ptr (llvm_term {{ split`{16} expected_ct : [16][8] }});
+};
+
+llvm_verify m "aes_encrypt" all_overrides false aes_encrypt_symbolic_key_spec
+    do {
+        simplify ss_with_both;
+        w4_unint_z3 ["SubBytes", "ShiftRows", "MixColumns", "AddRoundKey"];
+    };
+
+print "   aes_encrypt (SYMBOLIC key schedule): VERIFIED";
+print "";
+
+//////////////////////////////////////////////////////////////////////////////
+// Part 4: Verify aes_decrypt with SYMBOLIC KEY SCHEDULE
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "Part 4: Full AES-128 Decryption with SYMBOLIC KEY SCHEDULE";
+print "============================================================";
+print "";
+
+print "Verifying aes_decrypt with symbolic ciphertext AND symbolic key schedule...";
+
+let aes_decrypt_symbolic_key_spec = do {
+    // Symbolic ciphertext: 16 bytes (128 bits symbolic)
+    in_ptr <- llvm_alloc_readonly (llvm_array 16 (llvm_int 8));
+    ciphertext <- llvm_fresh_var "ciphertext" (llvm_array 16 (llvm_int 8));
+    llvm_points_to in_ptr (llvm_term ciphertext);
+
+    // Output plaintext: 16 bytes
+    out_ptr <- llvm_alloc (llvm_array 16 (llvm_int 8));
+
+    // SYMBOLIC key schedule: 44 words (1408 bits symbolic!)
+    key_ptr <- llvm_alloc_readonly (llvm_array 44 (llvm_int 32));
+    c_key_schedule <- llvm_fresh_var "key_schedule" (llvm_array 44 (llvm_int 32));
+    llvm_points_to key_ptr (llvm_term c_key_schedule);
+
+    // Keysize = 128
+    llvm_execute_func [in_ptr, out_ptr, key_ptr, llvm_term {{ 128 : [32] }}];
+
+    // Convert C key schedule to Cryptol format
+    let cryptol_ks = {{
+        [ transpose [ split w | w <- rk ] | rk <- split`{11} c_key_schedule ]
+    }};
+
+    let expected_pt = {{ invCipher cryptol_ks (join ciphertext) }};
+    llvm_points_to out_ptr (llvm_term {{ split`{16} expected_pt : [16][8] }});
+};
+
+llvm_verify m "aes_decrypt" all_overrides false aes_decrypt_symbolic_key_spec
+    do {
+        simplify ss_with_both;
+        w4_unint_z3 ["InvSubBytes", "InvShiftRows", "InvMixColumns", "AddRoundKey"];
+    };
+
+print "   aes_decrypt (SYMBOLIC key schedule): VERIFIED";
+print "";
+
+//////////////////////////////////////////////////////////////////////////////
+// Summary
+//////////////////////////////////////////////////////////////////////////////
+
+print "============================================================";
+print "=== ALL VERIFICATIONS COMPLETE ===";
+print "============================================================";
+print "";
+print "FULL SYMBOLIC COVERAGE ACHIEVED:";
+print "";
+print "  aes_encrypt: 128 bits plaintext + 1408 bits key schedule";
+print "  aes_decrypt: 128 bits ciphertext + 1408 bits key schedule";
+print "";
+print "Combined with aes_verify_keysetup.saw (which proves key expansion";
+print "correct for all 128-bit keys), this gives COMPLETE COVERAGE:";
+print "";
+print "  For ALL keys k and ALL plaintexts pt:";
+print "    aes_encrypt(pt, aes_key_setup(k)) == cipher(keyExpansion(k), pt)";
+print "";
+print "Techniques used:";
+print "  - Compositional verification (primitive overrides)";
+print "  - Cipher unroll lemmas";
+print "  - Uninterpreted functions (w4_unint_z3)";
+print "  - Simpsets for term rewriting";
+print "";
