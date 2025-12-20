@@ -22,7 +22,7 @@ BITCODE := aes.bc aes_pbt_harness.bc
 # SAW scripts
 SAW_SCRIPTS := aes_pbt.saw aes_verify.saw aes_verify_keysetup.saw aes_verify_encrypt_unint.saw
 
-.PHONY: all clean verify verify-keysetup verify-encrypt-unint verify-symbolic-key verify-all pbt
+.PHONY: all clean verify verify-ci verify-keysetup verify-encrypt-unint verify-symbolic-key verify-all pbt
 
 all: $(BITCODE)
 
@@ -43,6 +43,11 @@ pbt: $(BITCODE)
 # Verifies SubBytes, ShiftRows, MixColumns, AddRoundKey
 verify: $(BITCODE)
 	$(SAW) aes_verify.saw
+
+# CI verification - PBT only (random testing, lower memory than symbolic)
+# Full symbolic verification can OOM in constrained Docker environments
+verify-ci: $(BITCODE)
+	$(SAW) aes_pbt.saw
 
 # Symbolic verification of key expansion (slow)
 # Verifies aes_key_setup for ALL possible 128-bit keys

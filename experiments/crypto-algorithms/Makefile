@@ -19,10 +19,12 @@ verify:
 		$(MAKE) -C $$alg verify; \
 	done
 
-# CI-safe verification (skips slow/platform-specific tests)
+# CI-safe verification
 verify-ci:
 	@echo "=== Verifying sha1 (CI mode) ==="
 	@$(MAKE) -C sha1 verify-ci
+	@echo "=== Verifying aes (CI mode) ==="
+	@$(MAKE) -C aes verify-ci
 
 clean:
 	@for alg in $(ALGORITHMS); do \
