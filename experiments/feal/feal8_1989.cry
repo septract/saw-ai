@@ -446,3 +446,52 @@ decrypt_1989_unrolled cipher_bytes ks (k89, k1011, k1213, k1415) = plain_bytes
 
 property decrypt_unroll_lemma cipher_bytes ks wk =
     decrypt_1989 cipher_bytes ks wk == decrypt_1989_unrolled cipher_bytes ks wk
+
+// ============================================================================
+// Equivalence to HAC Reference Spec
+//
+// This is the key theorem: the 1989 implementation is equivalent to the
+// HAC-based reference spec when both operate on raw bytes.
+//
+// The internal representations differ (little-endian vs big-endian word
+// ordering), but the byte-level input/output behavior is identical.
+// ============================================================================
+
+// Convert between byte array and 64-bit block (big-endian, HAC convention)
+toBlock : [8][8] -> [64]
+toBlock bytes = join bytes
+
+fromBlock : [64] -> [8][8]
+fromBlock block = split block
+
+// Main equivalence theorem: 1989 encrypt == HAC encrypt at byte level
+property encrypt_equiv_to_HAC key_bytes plain_bytes =
+    encryptWithKey_1989 key_bytes plain_bytes == fromBlock (encrypt (toBlock key_bytes) (toBlock plain_bytes))
+
+// Main equivalence theorem: 1989 decrypt == HAC decrypt at byte level
+property decrypt_equiv_to_HAC key_bytes cipher_bytes =
+    decryptWithKey_1989 key_bytes cipher_bytes == fromBlock (decrypt (toBlock key_bytes) (toBlock cipher_bytes))
+
+// Byte-swap functions for equivalence proofs
+byteSwap16 : [16] -> [16]
+byteSwap16 x = join (reverse (split`{2} x : [2][8]))
+
+byteSwap32 : [32] -> [32]
+byteSwap32 x = join (reverse (split`{4} x : [4][8]))
+
+// 32-bit version of FK_1989 for equivalence proofs
+// (The main FK_1989 uses 64-bit to match C's HalfWord type)
+FK_1989_32 : [32] -> [32] -> [32]
+FK_1989_32 aa bb = drop`{32} (FK_1989 (zext aa) (zext bb))
+
+// Subkey relationship: HAC and 1989 subkeys are byte-swapped
+property subkey_equiv key_bytes =
+    and [ hac_subkeys @ i == byteSwap16 (keySchedule_1989 key_bytes @ i) | i <- [0..15] : [16][4] ]
+  where
+    hac_subkeys = keySchedule (toBlock key_bytes)
+
+// Verify test vectors match between specs
+property test_vectors_match =
+    toBlock expectedCipherBytes == testCiphertext
+  where
+    testCiphertext = encrypt (toBlock testKeyBytes) (toBlock testPlainBytes)

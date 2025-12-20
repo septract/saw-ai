@@ -646,10 +646,70 @@ print "  Decrypt (symbolic key): VERIFIED";
 disable_lax_loads_and_stores;
 print "";
 
+// ============================================================================
+// Stage 8: Equivalence to HAC Reference Spec
+//
+// Final theorem: prove that the 1989 implementation matches the HAC spec
+// at the byte level. This closes the verification chain:
+//
+//   C code  ==  feal8_1989.cry  ==  feal8.cry (HAC)
+//           ^                   ^
+//     (SAW proof)        (Cryptol proof)
+//
+// Strategy: Decompose into layers with uninterpreted functions to make
+// the proofs tractable. Each layer proves equivalence assuming the layer
+// below is equivalent.
+// ============================================================================
+
+print "=== Stage 8: HAC Equivalence Proof ===";
+print "";
+
+// Test vectors match (concrete) - sanity check
+print "Proving test vectors match...";
+prove_print z3 {{ test_vectors_match }};
+print "  Test vectors: MATCH";
+
+// Layer 1: S-box equivalence (trivially true - same functions imported)
+// S0 and S1 are identical between HAC and 1989 specs (imported from FEAL8)
+
+// Layer 2: fK/FK equivalence (with S0/S1 uninterpreted)
+// The key schedule functions differ in byte ordering but produce
+// byte-swapped equivalent subkeys.
+print "Proving fK equivalence (S0/S1 uninterpreted)...";
+prove_print (w4_unint_z3 ["S0", "S1"]) {{ \a b -> fK a b == byteSwap32 (FK_1989_32 (byteSwap32 a) (byteSwap32 b)) }};
+print "  fK equiv: PROVED";
+
+// Layer 3: f function equivalence (with S0/S1 uninterpreted)
+print "Proving f equivalence (S0/S1 uninterpreted)...";
+prove_print (w4_unint_z3 ["S0", "S1"]) {{ \a y -> f a y == byteSwap32 (drop`{32} (f_1989 (zext (byteSwap32 a)) (zext (byteSwap16 y)))) }};
+print "  f equiv: PROVED";
+
+// Layer 4: Full encrypt equivalence
+// Keep S0/S1 uninterpreted, but let SAW evaluate through fK/f.
+// This is tractable because the S-boxes are the expensive part.
+print "Proving encrypt equivalence to HAC spec (S0/S1 uninterpreted)...";
+prove_print (w4_unint_z3 ["S0", "S1"])
+    {{ \key plain -> encrypt_equiv_to_HAC key plain }};
+print "  Encrypt equiv: PROVED";
+
+print "Proving decrypt equivalence to HAC spec (S0/S1 uninterpreted)...";
+prove_print (w4_unint_z3 ["S0", "S1"])
+    {{ \key cipher -> decrypt_equiv_to_HAC key cipher }};
+print "  Decrypt equiv: PROVED";
+
+print "";
+
 print "=== FEAL-8 1989 Verification Complete ===";
 print "";
 print "Summary:";
-print "  Primitives: Rot2, S0, S1, f, FK";
-print "  Key schedule: SetKey (symbolic 64-bit key)";
-print "  Encrypt/Decrypt: symbolic key schedule + symbolic plaintext/ciphertext";
+print "  C code verified against feal8_1989.cry (SAW proofs)";
+print "  feal8_1989.cry equivalent to feal8.cry HAC spec (Cryptol proofs)";
+print "";
+print "  Functions verified:";
+print "    Rot2, S0, S1, f, FK, SetKey, Encrypt, Decrypt";
+print "";
+print "  Symbolic coverage:";
+print "    - SetKey: 64-bit key (all 2^64 keys)";
+print "    - Encrypt/Decrypt: 704-bit input (key schedule + plaintext/ciphertext)";
+print "    - HAC equivalence: 128-bit input (all 2^128 key/message pairs)";
 print "";
