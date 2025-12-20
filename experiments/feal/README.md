@@ -1,81 +1,65 @@
 # FEAL-8 SAW Verification
 
-Formal verification of the FEAL-8 (Fast Data Encipherment Algorithm) block cipher.
+Formal verification of the FEAL-8 block cipher - specifically, a 1989 C implementation with unions, globals, and a lazy-initialized lookup table.
 
-## Background
+**Status: FULLY VERIFIED** (all functions, all keys, all messages)
 
-FEAL was designed by Akihiro Shimizu and Shoji Miyaguchi at NTT Japan in 1987 as a faster alternative to DES. It is historically significant as the cipher that led to the discovery of **differential cryptanalysis** by Eli Biham and Adi Shamir.
+## The Challenge
 
-### Technical Details
+[FEAL](https://en.wikipedia.org/wiki/FEAL) (Fast data Encipherment ALgorithm) is famous for being broken—attacks on it led to differential cryptanalysis. We're not proving it's secure (it isn't). We're proving a 35-year-old C implementation correctly implements the algorithm.
 
-- **Block size**: 64 bits
-- **Key size**: 64 bits
-- **Structure**: Feistel network
-- **Rounds**: 8 (FEAL-8), originally 4 (FEAL-4)
+Our target: code from [Schneier's Applied Cryptography archive](https://www.schneier.com/wp-content/uploads/2015/03/FEAL8-2.zip) (September 1989). It has:
+- Union-based byte extraction
+- Global state for key schedule
+- Lazy-initialized Rot2 lookup table
+- A portability bug (fixed with `= {0}` initialization)
 
-### Known Vulnerabilities
+## What We Proved
 
-FEAL has been extensively broken:
+```
+C code (1989)  ══SAW══►  feal8_1989.cry  ══Cryptol══►  feal8.cry (HAC reference)
+```
 
-- **FEAL-4**: Broken with differential cryptanalysis (Biham/Shamir, 1989)
-- **FEAL-8**: Broken with ~10,000 chosen plaintext pairs (Gilbert/Chassé, 1990)
-- **FEAL-N**: Broken for N ≤ 31 rounds (Biham/Shamir, 1991)
-- Linear cryptanalysis was first demonstrated on FEAL (Matsui/Yamagishi, 1992)
+| Function | Symbolic Bits | Notes |
+|----------|---------------|-------|
+| Rot2, S0, S1 | 8-16 | Lookup table + S-boxes |
+| f, FK | 96-128 | Round function, key schedule function |
+| SetKey | 64 | All 2^64 keys verified |
+| Encrypt/Decrypt | 704 | Symbolic key schedule + plaintext |
+| HAC equivalence | 128 | Full algorithm correctness |
 
-## Source Code
+**Total proof time: ~11 seconds** thanks to compositional verification.
 
-The implementation is from Pate Williams (1997), based on the "Handbook of Applied Cryptography" by Menezes et al., Section 7.5, pages 259-262.
+## Quick Start
 
-Original source: [Schneier's Applied Cryptography Source Code](https://www.schneier.com/books/applied-cryptography-source/)
+```bash
+make verify-1989    # Full verification
+make test-1989      # Run C test harness
+```
 
 ## Files
 
-```
-Makefile         - Build system
-README.md        - This file
-.gitignore       - Excludes src/ and generated files
-src/             - Third-party source (gitignored, use `make download`)
-  feal8.c        - FEAL-8 C implementation (Pate Williams, 1997)
-  PROVENANCE     - Source attribution and download info
-feal8.bc         - LLVM bitcode (generated)
-```
+| File | Description |
+|------|-------------|
+| [feal8_1989_portable.c](feal8_1989_portable.c) | C source with LP64 fixes |
+| [feal8.cry](feal8.cry) | HAC reference spec (big-endian) |
+| [feal8_1989.cry](feal8_1989.cry) | 1989-specific spec (little-endian) |
+| [feal8_1989_verify.saw](feal8_1989_verify.saw) | SAW verification (8 stages) |
+| [PROVENANCE.md](PROVENANCE.md) | Source attribution |
 
-## Building
+## Documentation
 
-```bash
-# Download FEAL source from Schneier archive
-make download
+See [docs/feal8-1989-verification.md](../../docs/feal8-1989-verification.md) for the full story, including the portability bug we found and how compositional verification makes this tractable.
 
-# Build LLVM bitcode for SAW
-make bitcode
+## Technical Details
 
-# Run native test
-make test
-
-# Clean generated files
-make clean
-```
-
-## Verification Goals
-
-1. **Primitives**: Verify the Sd (substitution) and f (round) functions
-2. **Key schedule**: Verify FEAL_key_schedule matches Cryptol spec
-3. **Encryption/Decryption**: Verify FEAL_encryption and FEAL_decryption
-4. **Correctness**: Prove decrypt(encrypt(m)) == m for all keys and messages
-5. **(Advanced)**: Model differential characteristics used in attacks
-
-## TODO
-
-- [ ] Write Cryptol specification (feal8.cry)
-- [ ] Concrete tests with known test vectors
-- [ ] Symbolic verification of primitives (Sd, f, fK)
-- [ ] Symbolic verification of key schedule
-- [ ] Full encrypt/decrypt verification
-- [ ] Document differential characteristics
+- **Block size**: 64 bits
+- **Key size**: 64 bits
+- **Structure**: 8-round Feistel network
+- **Known broken**: Differential cryptanalysis (Biham/Shamir), linear cryptanalysis (Matsui)
 
 ## References
 
-- Shimizu, A., Miyaguchi, S. (1987). "Fast Data Encipherment Algorithm FEAL"
-- Biham, E., Shamir, A. (1991). "Differential Cryptanalysis of FEAL and N-Hash"
-- Menezes, A. et al. (1996). "Handbook of Applied Cryptography", Section 7.5
-- [The Amazing King - FEAL Differential Cryptanalysis](http://www.theamazingking.com/crypto-feal.php)
+- Shimizu & Miyaguchi (1987). "Fast Data Encipherment Algorithm FEAL"
+- Biham & Shamir (1991). "Differential Cryptanalysis of FEAL and N-Hash"
+- [Handbook of Applied Cryptography, Section 7.5](https://cacr.uwaterloo.ca/hac/)

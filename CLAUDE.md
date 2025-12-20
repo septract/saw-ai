@@ -111,6 +111,12 @@ experiments/
       aes_pbt.saw                # Property-based testing
       aes_verify.saw             # Symbolic verification (primitives)
       aes_verify_keysetup.saw    # Symbolic verification (key expansion)
+  feal/               # FEAL-8 verification (1989 implementation)
+    Makefile
+    feal8_1989_portable.c      # C source with LP64 portability fixes
+    feal8.cry                  # HAC reference spec
+    feal8_1989.cry             # 1989-specific spec (little-endian)
+    feal8_1989_verify.saw      # Full verification (8 stages)
 ```
 
 ### Build System
@@ -194,6 +200,23 @@ make verify-keysetup    # Symbolic verify key expansion (~30+ min)
   make verify-encrypt-unint # Full encrypt/decrypt verification (~14 min)
   make verify-keysetup      # Symbolic verify key expansion (~30+ min)
   make verify-all           # Everything
+  ```
+
+**feal/** - Verifying 1989 FEAL-8 implementation
+- Source: [Schneier's Applied Cryptography archive](https://www.schneier.com/wp-content/uploads/2015/03/FEAL8-2.zip) (September 1989)
+- Reference spec: `feal8.cry` (HAC Section 7.5)
+- Challenge: Unions, globals, lazy-init lookup table, LP64 portability bug
+- Documentation: [docs/feal8-1989-verification.md](docs/feal8-1989-verification.md)
+- Status: **FULLY VERIFIED** (~11 sec total)
+  - Rot2, S0, S1: VERIFIED (8-16 bits symbolic)
+  - f, FK: VERIFIED (96-128 bits symbolic)
+  - SetKey: VERIFIED (64 bits - all 2^64 keys)
+  - Encrypt/Decrypt: VERIFIED (704 bits - symbolic key schedule + plaintext)
+  - HAC equivalence: PROVED (128 bits - all key/message pairs)
+- Make targets:
+  ```bash
+  cd experiments/feal
+  make verify-1989  # Full verification (~11 sec)
   ```
 
 ### Verification Strategy
