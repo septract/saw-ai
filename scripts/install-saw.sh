@@ -22,11 +22,11 @@ case "$OS" in
         if [ "$ARCH" = "arm64" ]; then
             SAW_FILE="saw-${SAW_VERSION}-macos-14-ARM64-with-solvers.tar.gz"
         else
-            SAW_FILE="saw-${SAW_VERSION}-macos-14-x86_64-with-solvers.tar.gz"
+            SAW_FILE="saw-${SAW_VERSION}-macos-13-X64-with-solvers.tar.gz"
         fi
         ;;
     Linux)
-        SAW_FILE="saw-${SAW_VERSION}-linux-x86_64-with-solvers.tar.gz"
+        SAW_FILE="saw-${SAW_VERSION}-ubuntu-22.04-X64-with-solvers.tar.gz"
         ;;
     *)
         echo "Unsupported operating system: $OS"

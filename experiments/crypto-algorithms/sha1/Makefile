@@ -14,7 +14,7 @@ SAW_SCRIPTS := sha1_verify_primitives.saw \
                sha1_verify_single_round.saw \
                sha1_concrete_test.saw
 
-.PHONY: all clean verify verify-primitives verify-rounds verify-concrete
+.PHONY: all clean verify verify-ci verify-primitives verify-rounds verify-concrete
 
 all: $(BITCODE)
 
@@ -33,6 +33,14 @@ verify: $(BITCODE)
 	@echo ""
 	@echo "--- Verifying single round functions ---"
 	@$(SAW) sha1_verify_single_round.saw
+	@echo ""
+	@echo "--- Running concrete tests ---"
+	@$(SAW) sha1_concrete_test.saw
+
+# CI-safe verification (skips platform-specific round tests)
+verify-ci: $(BITCODE)
+	@echo "--- Verifying primitives (Ch, Parity, Maj) ---"
+	@$(SAW) sha1_verify_primitives.saw
 	@echo ""
 	@echo "--- Running concrete tests ---"
 	@$(SAW) sha1_concrete_test.saw

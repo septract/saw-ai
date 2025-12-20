@@ -6,9 +6,9 @@ ROOT := $(CURDIR)
 include $(ROOT)/config.mk
 
 # Experiment directories
-EXPERIMENTS := experiments/hello-saw experiments/ffs experiments/crypto-algorithms
+EXPERIMENTS := experiments/hello-saw experiments/ffs experiments/crypto-algorithms experiments/feal
 
-.PHONY: all clean verify help $(EXPERIMENTS)
+.PHONY: all clean verify verify-ci help $(EXPERIMENTS)
 
 all: $(EXPERIMENTS)
 
@@ -20,6 +20,17 @@ verify:
 		echo "=== Verifying $$dir ==="; \
 		$(MAKE) -C $$dir verify; \
 	done
+
+# CI-safe verification (skips slow/platform-specific tests)
+verify-ci:
+	@echo "=== Verifying experiments/hello-saw ==="
+	@$(MAKE) -C experiments/hello-saw verify
+	@echo "=== Verifying experiments/ffs ==="
+	@$(MAKE) -C experiments/ffs verify
+	@echo "=== Verifying experiments/crypto-algorithms (CI mode) ==="
+	@$(MAKE) -C experiments/crypto-algorithms verify-ci
+	@echo "=== Verifying experiments/feal ==="
+	@$(MAKE) -C experiments/feal verify-ci
 
 clean:
 	@for dir in $(EXPERIMENTS); do \
@@ -37,7 +48,8 @@ help:
 	@echo "Experiments:"
 	@echo "  experiments/hello-saw          - Simple max() example"
 	@echo "  experiments/ffs                - Find first set bit"
-	@echo "  experiments/crypto-algorithms  - SHA1 verification"
+	@echo "  experiments/crypto-algorithms  - SHA1/AES verification"
+	@echo "  experiments/feal               - FEAL-8 verification"
 	@echo ""
 	@echo "Tools:"
 	@echo "  CLANG = $(CLANG)"

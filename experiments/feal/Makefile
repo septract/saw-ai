@@ -4,9 +4,8 @@
 # NOTE TO CLAUDE: The primary verification target is the 1989 implementation.
 # DO NOT work on the Williams 1997 verification without explicit user permission.
 
-# Use Homebrew LLVM for SAW compatibility
-CLANG = /opt/homebrew/opt/llvm@18/bin/clang
-CLANG_FLAGS = -emit-llvm -c -g -O0
+ROOT := ../..
+include $(ROOT)/config.mk
 
 # Source files
 # Williams 1997: downloaded to src/ (gitignored), use 'make download'
@@ -20,9 +19,10 @@ FEAL_1989_SRC = feal8_1989_portable.c
 FEAL_BC = feal8.bc
 FEAL_1989_BC = feal8_1989.bc
 
-.PHONY: all clean bitcode verify test test-1989 download help
+.PHONY: all clean bitcode verify verify-ci verify-1989 verify-williams test test-1989 download help
 
-all: bitcode
+# Default: only build 1989 bitcode (Williams requires 'make download' first)
+all: $(FEAL_1989_BC)
 
 help:
 	@echo "FEAL-8 SAW Verification"
@@ -60,10 +60,10 @@ download:
 bitcode: $(FEAL_BC) $(FEAL_1989_BC)
 
 $(FEAL_BC): $(FEAL_SRC)
-	$(CLANG) $(CLANG_FLAGS) $< -o $@
+	$(CLANG) $(CFLAGS) $< -o $@
 
 $(FEAL_1989_BC): $(FEAL_1989_SRC)
-	$(CLANG) $(CLANG_FLAGS) $< -o $@
+	$(CLANG) $(CFLAGS) $< -o $@
 
 $(FEAL_SRC):
 	@echo "Source file not found. Run 'make download' first."
@@ -83,7 +83,7 @@ feal8_1989_test: $(FEAL_1989_SRC)
 	$(CC) -o $@ $<
 
 # Cryptol specification tests
-CRYPTOL = $(shell pwd)/../../tools/saw/bin/cryptol
+CRYPTOL = $(ROOT)/tools/saw/bin/cryptol
 
 test-cryptol: feal8.cry
 	@echo "Running Cryptol tests..."
@@ -93,17 +93,18 @@ test-cryptol: feal8.cry
 	@echo "All Cryptol tests passed!"
 
 # SAW verification
-SAW = $(shell pwd)/../../tools/saw/bin/saw
-
-verify: verify-williams
+verify: verify-1989
 
 verify-williams: $(FEAL_BC) feal8.cry feal8_williams_verify.saw
 	@echo "Running SAW verification (Williams 1997 implementation)..."
-	CRYPTOLPATH="../../specs/cryptol-specs" $(SAW) feal8_williams_verify.saw
+	$(SAW) feal8_williams_verify.saw
 
 verify-1989: $(FEAL_1989_BC) feal8.cry feal8_1989_verify.saw
-	@echo "Running SAW verification (1989 implementation - challenge)..."
-	CRYPTOLPATH="../../specs/cryptol-specs" $(SAW) feal8_1989_verify.saw
+	@echo "Running SAW verification (1989 implementation)..."
+	$(SAW) feal8_1989_verify.saw
+
+# CI-safe verification (same as verify-1989, 1989 impl is checked into repo)
+verify-ci: verify-1989
 
 clean:
 	rm -f $(FEAL_BC) $(FEAL_1989_BC) feal8_test feal8_1989_test *.bc

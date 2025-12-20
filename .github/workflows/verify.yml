@@ -1,0 +1,54 @@
+name: SAW Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM 18
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 18
+          echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
+
+      - name: Cache SAW installation
+        id: cache-saw
+        uses: actions/cache@v4
+        with:
+          path: tools/saw
+          key: saw-1.4-linux-x86_64
+
+      - name: Install SAW
+        if: steps.cache-saw.outputs.cache-hit != 'true'
+        run: ./scripts/install-saw.sh
+
+      - name: Clone Cryptol specs
+        run: |
+          if [ ! -d "specs/cryptol-specs" ]; then
+            git clone https://github.com/GaloisInc/cryptol-specs.git specs/cryptol-specs
+          fi
+
+      - name: Add SAW to PATH
+        run: echo "$(pwd)/tools/saw/bin" >> $GITHUB_PATH
+
+      - name: Clean stale bitcode
+        run: make clean
+
+      - name: Build bitcode
+        run: make CLANG=clang-18 all
+
+      - name: Run verifications
+        run: make CLANG=clang-18 verify-ci
