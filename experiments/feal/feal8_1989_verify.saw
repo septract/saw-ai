@@ -495,4 +495,161 @@ print "  Decrypt: VERIFIED";
 disable_lax_loads_and_stores;
 print "";
 
+// ============================================================================
+// Stage 7: Symbolic Key Verification
+//
+// Generalize from concrete test key to fully symbolic key schedule.
+// This proves correctness for ALL possible keys, not just the test key.
+//
+// Symbolic variables:
+// - 16 subkeys: [16][32] = 512 bits
+// - 4 whitening keys: [64] each = 256 bits (only low 32 bits matter)
+// - plaintext/ciphertext: [8][8] = 64 bits
+// Total: ~832 bits symbolic
+//
+// With f_1989 uninterpreted, this should still be tractable.
+// ============================================================================
+
+print "=== Stage 7: Symbolic Key Verification ===";
+print "";
+
+// Encrypt with symbolic key schedule
+let Encrypt_symbolic_key_spec : CrucibleSetup () = do {
+    // Set up Rot2's static state
+    llvm_alloc_global "Rot2.First";
+    llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 0 : [32] }});
+    llvm_alloc_global "Rot2.RetVal";
+    llvm_points_to (llvm_global "Rot2.RetVal") (llvm_term {{ rot2Table }});
+
+    // Symbolic key schedule in globals
+    // NOTE: Subkeys are stored as 32-bit unsigned int, but only low 16 bits are meaningful
+    // (from the 16-bit key schedule). We verify with full 32-bit symbolic values.
+    llvm_alloc_global "K";
+    sym_subkeys <- llvm_fresh_var "subkeys" (llvm_array 16 (llvm_int 32));
+    llvm_points_to (llvm_global "K") (llvm_term sym_subkeys);
+
+    // Whitening keys: 64-bit HalfWord but only low 32 bits are set by SetKey.
+    // The portability fix ensures high 32 bits are zero.
+    // Constrain symbolic values to match this invariant.
+    llvm_alloc_global "K89";
+    sym_k89_32 <- llvm_fresh_var "k89" (llvm_int 32);
+    let sym_k89 = {{ zext sym_k89_32 : [64] }};
+    llvm_points_to (llvm_global "K89") (llvm_term sym_k89);
+
+    llvm_alloc_global "K1011";
+    sym_k1011_32 <- llvm_fresh_var "k1011" (llvm_int 32);
+    let sym_k1011 = {{ zext sym_k1011_32 : [64] }};
+    llvm_points_to (llvm_global "K1011") (llvm_term sym_k1011);
+
+    llvm_alloc_global "K1213";
+    sym_k1213_32 <- llvm_fresh_var "k1213" (llvm_int 32);
+    let sym_k1213 = {{ zext sym_k1213_32 : [64] }};
+    llvm_points_to (llvm_global "K1213") (llvm_term sym_k1213);
+
+    llvm_alloc_global "K1415";
+    sym_k1415_32 <- llvm_fresh_var "k1415" (llvm_int 32);
+    let sym_k1415 = {{ zext sym_k1415_32 : [64] }};
+    llvm_points_to (llvm_global "K1415") (llvm_term sym_k1415);
+
+    // Symbolic plaintext
+    plain_ptr <- llvm_alloc_readonly (llvm_array 8 (llvm_int 8));
+    plain_bytes <- llvm_fresh_var "plain_bytes" (llvm_array 8 (llvm_int 8));
+    llvm_points_to plain_ptr (llvm_term plain_bytes);
+
+    // Output buffer
+    cipher_ptr <- llvm_alloc (llvm_array 8 (llvm_int 8));
+
+    llvm_execute_func [plain_ptr, cipher_ptr];
+
+    // Post-state: globals unchanged
+    llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 0 : [32] }});
+    llvm_points_to (llvm_global "Rot2.RetVal") (llvm_term {{ rot2Table }});
+
+    // Expected: encrypt_1989 with symbolic key schedule
+    let expected = {{ encrypt_1989 plain_bytes sym_subkeys (sym_k89, sym_k1011, sym_k1213, sym_k1415) }};
+    llvm_points_to cipher_ptr (llvm_term expected);
+};
+
+enable_lax_loads_and_stores;
+
+print "Verifying Encrypt (symbolic key, symbolic plaintext)...";
+llvm_verify m "Encrypt" [Rot2_ov, f_ov] false Encrypt_symbolic_key_spec
+    do {
+        simplify ss_with_both;
+        goal_eval_unint ["f_1989"];
+        w4_unint_z3 ["f_1989"];
+    };
+print "  Encrypt (symbolic key): VERIFIED";
+
+// Decrypt with symbolic key schedule
+let Decrypt_symbolic_key_spec : CrucibleSetup () = do {
+    // Set up Rot2's static state
+    llvm_alloc_global "Rot2.First";
+    llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 0 : [32] }});
+    llvm_alloc_global "Rot2.RetVal";
+    llvm_points_to (llvm_global "Rot2.RetVal") (llvm_term {{ rot2Table }});
+
+    // Symbolic key schedule in globals (same constraints as Encrypt)
+    llvm_alloc_global "K";
+    sym_subkeys <- llvm_fresh_var "subkeys" (llvm_array 16 (llvm_int 32));
+    llvm_points_to (llvm_global "K") (llvm_term sym_subkeys);
+
+    // Whitening keys constrained to 32-bit values (zero high bits)
+    llvm_alloc_global "K89";
+    sym_k89_32 <- llvm_fresh_var "k89" (llvm_int 32);
+    let sym_k89 = {{ zext sym_k89_32 : [64] }};
+    llvm_points_to (llvm_global "K89") (llvm_term sym_k89);
+
+    llvm_alloc_global "K1011";
+    sym_k1011_32 <- llvm_fresh_var "k1011" (llvm_int 32);
+    let sym_k1011 = {{ zext sym_k1011_32 : [64] }};
+    llvm_points_to (llvm_global "K1011") (llvm_term sym_k1011);
+
+    llvm_alloc_global "K1213";
+    sym_k1213_32 <- llvm_fresh_var "k1213" (llvm_int 32);
+    let sym_k1213 = {{ zext sym_k1213_32 : [64] }};
+    llvm_points_to (llvm_global "K1213") (llvm_term sym_k1213);
+
+    llvm_alloc_global "K1415";
+    sym_k1415_32 <- llvm_fresh_var "k1415" (llvm_int 32);
+    let sym_k1415 = {{ zext sym_k1415_32 : [64] }};
+    llvm_points_to (llvm_global "K1415") (llvm_term sym_k1415);
+
+    // Symbolic ciphertext
+    cipher_ptr <- llvm_alloc_readonly (llvm_array 8 (llvm_int 8));
+    cipher_bytes <- llvm_fresh_var "cipher_bytes" (llvm_array 8 (llvm_int 8));
+    llvm_points_to cipher_ptr (llvm_term cipher_bytes);
+
+    // Output buffer
+    plain_ptr <- llvm_alloc (llvm_array 8 (llvm_int 8));
+
+    llvm_execute_func [cipher_ptr, plain_ptr];
+
+    // Post-state: globals unchanged
+    llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 0 : [32] }});
+    llvm_points_to (llvm_global "Rot2.RetVal") (llvm_term {{ rot2Table }});
+
+    // Expected: decrypt_1989 with symbolic key schedule
+    let expected = {{ decrypt_1989 cipher_bytes sym_subkeys (sym_k89, sym_k1011, sym_k1213, sym_k1415) }};
+    llvm_points_to plain_ptr (llvm_term expected);
+};
+
+print "Verifying Decrypt (symbolic key, symbolic ciphertext)...";
+llvm_verify m "Decrypt" [Rot2_ov, f_ov] false Decrypt_symbolic_key_spec
+    do {
+        simplify ss_with_both;
+        goal_eval_unint ["f_1989"];
+        w4_unint_z3 ["f_1989"];
+    };
+print "  Decrypt (symbolic key): VERIFIED";
+
+disable_lax_loads_and_stores;
+print "";
+
 print "=== FEAL-8 1989 Verification Complete ===";
+print "";
+print "Summary:";
+print "  Primitives: Rot2, S0, S1, f, FK";
+print "  Key schedule: SetKey (symbolic 64-bit key)";
+print "  Encrypt/Decrypt: symbolic key schedule + symbolic plaintext/ciphertext";
+print "";
