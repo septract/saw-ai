@@ -40,43 +40,37 @@ WORD sha1_maj(WORD b, WORD c, WORD d) {
 }
 
 // Single round with Ch (rounds 0-19)
-// Takes current state + one message word + constant, returns new state
+// Uses pointer interface for cross-platform ABI compatibility
 __attribute__((noinline))
-SHA1_STATE sha1_round_ch(SHA1_STATE s, WORD w, WORD k) {
-    SHA1_STATE r;
-    WORD t = ROTLEFT(s.a, 5) + sha1_ch(s.b, s.c, s.d) + s.e + k + w;
-    r.a = t;
-    r.b = s.a;
-    r.c = ROTLEFT(s.b, 30);
-    r.d = s.c;
-    r.e = s.d;
-    return r;
+void sha1_round_ch(SHA1_STATE *r, const SHA1_STATE *s, WORD w, WORD k) {
+    WORD t = ROTLEFT(s->a, 5) + sha1_ch(s->b, s->c, s->d) + s->e + k + w;
+    r->a = t;
+    r->b = s->a;
+    r->c = ROTLEFT(s->b, 30);
+    r->d = s->c;
+    r->e = s->d;
 }
 
 // Single round with Parity (rounds 20-39 and 60-79)
 __attribute__((noinline))
-SHA1_STATE sha1_round_parity(SHA1_STATE s, WORD w, WORD k) {
-    SHA1_STATE r;
-    WORD t = ROTLEFT(s.a, 5) + sha1_parity(s.b, s.c, s.d) + s.e + k + w;
-    r.a = t;
-    r.b = s.a;
-    r.c = ROTLEFT(s.b, 30);
-    r.d = s.c;
-    r.e = s.d;
-    return r;
+void sha1_round_parity(SHA1_STATE *r, const SHA1_STATE *s, WORD w, WORD k) {
+    WORD t = ROTLEFT(s->a, 5) + sha1_parity(s->b, s->c, s->d) + s->e + k + w;
+    r->a = t;
+    r->b = s->a;
+    r->c = ROTLEFT(s->b, 30);
+    r->d = s->c;
+    r->e = s->d;
 }
 
 // Single round with Maj (rounds 40-59)
 __attribute__((noinline))
-SHA1_STATE sha1_round_maj(SHA1_STATE s, WORD w, WORD k) {
-    SHA1_STATE r;
-    WORD t = ROTLEFT(s.a, 5) + sha1_maj(s.b, s.c, s.d) + s.e + k + w;
-    r.a = t;
-    r.b = s.a;
-    r.c = ROTLEFT(s.b, 30);
-    r.d = s.c;
-    r.e = s.d;
-    return r;
+void sha1_round_maj(SHA1_STATE *r, const SHA1_STATE *s, WORD w, WORD k) {
+    WORD t = ROTLEFT(s->a, 5) + sha1_maj(s->b, s->c, s->d) + s->e + k + w;
+    r->a = t;
+    r->b = s->a;
+    r->c = ROTLEFT(s->b, 30);
+    r->d = s->c;
+    r->e = s->d;
 }
 
 /********************** MESSAGE SCHEDULE ****************************/
@@ -97,7 +91,7 @@ void sha1_message_schedule(const BYTE data[], WORD m[80]) {
 __attribute__((noinline))
 void sha1_transform(SHA1_CTX *ctx, const BYTE data[]) {
     WORD m[80];
-    SHA1_STATE s;
+    SHA1_STATE s, tmp;
     int i;
 
     sha1_message_schedule(data, m);
@@ -109,20 +103,28 @@ void sha1_transform(SHA1_CTX *ctx, const BYTE data[]) {
     s.e = ctx->state[4];
 
     // Rounds 0-19: Ch
-    for (i = 0; i < 20; ++i)
-        s = sha1_round_ch(s, m[i], ctx->k[0]);
+    for (i = 0; i < 20; ++i) {
+        sha1_round_ch(&tmp, &s, m[i], ctx->k[0]);
+        s = tmp;
+    }
 
     // Rounds 20-39: Parity
-    for (i = 20; i < 40; ++i)
-        s = sha1_round_parity(s, m[i], ctx->k[1]);
+    for (i = 20; i < 40; ++i) {
+        sha1_round_parity(&tmp, &s, m[i], ctx->k[1]);
+        s = tmp;
+    }
 
     // Rounds 40-59: Maj
-    for (i = 40; i < 60; ++i)
-        s = sha1_round_maj(s, m[i], ctx->k[2]);
+    for (i = 40; i < 60; ++i) {
+        sha1_round_maj(&tmp, &s, m[i], ctx->k[2]);
+        s = tmp;
+    }
 
     // Rounds 60-79: Parity
-    for (i = 60; i < 80; ++i)
-        s = sha1_round_parity(s, m[i], ctx->k[3]);
+    for (i = 60; i < 80; ++i) {
+        sha1_round_parity(&tmp, &s, m[i], ctx->k[3]);
+        s = tmp;
+    }
 
     ctx->state[0] += s.a;
     ctx->state[1] += s.b;

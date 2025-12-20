@@ -92,14 +92,15 @@ print "";
 // ============================================================
 // Verify sha1_round_ch using ch_ov as override
 // Input: state (160 bits) + w (32 bits) + k (32 bits) = 224 bits
+// Uses pointer interface for cross-platform ABI compatibility
 // ============================================================
 
 let sha1_round_ch_spec = do {
-    // Return struct (sret)
+    // Output state pointer
     ret_ptr <- llvm_alloc (llvm_struct "struct.SHA1_STATE");
 
-    // Input state (passed by pointer due to ABI)
-    input_ptr <- llvm_alloc (llvm_struct "struct.SHA1_STATE");
+    // Input state pointer (read-only)
+    input_ptr <- llvm_alloc_readonly (llvm_struct "struct.SHA1_STATE");
     a <- llvm_fresh_var "a" (llvm_int 32);
     b <- llvm_fresh_var "b" (llvm_int 32);
     c <- llvm_fresh_var "c" (llvm_int 32);
@@ -138,7 +139,7 @@ print "";
 
 let sha1_round_parity_spec = do {
     ret_ptr <- llvm_alloc (llvm_struct "struct.SHA1_STATE");
-    input_ptr <- llvm_alloc (llvm_struct "struct.SHA1_STATE");
+    input_ptr <- llvm_alloc_readonly (llvm_struct "struct.SHA1_STATE");
     a <- llvm_fresh_var "a" (llvm_int 32);
     b <- llvm_fresh_var "b" (llvm_int 32);
     c <- llvm_fresh_var "c" (llvm_int 32);
@@ -173,7 +174,7 @@ print "";
 
 let sha1_round_maj_spec = do {
     ret_ptr <- llvm_alloc (llvm_struct "struct.SHA1_STATE");
-    input_ptr <- llvm_alloc (llvm_struct "struct.SHA1_STATE");
+    input_ptr <- llvm_alloc_readonly (llvm_struct "struct.SHA1_STATE");
     a <- llvm_fresh_var "a" (llvm_int 32);
     b <- llvm_fresh_var "b" (llvm_int 32);
     c <- llvm_fresh_var "c" (llvm_int 32);

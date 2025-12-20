@@ -37,10 +37,13 @@ verify: $(BITCODE)
 	@echo "--- Running concrete tests ---"
 	@$(SAW) sha1_concrete_test.saw
 
-# CI-safe verification (skips platform-specific round tests)
+# CI-safe verification (now includes rounds - fixed for cross-platform ABI)
 verify-ci: $(BITCODE)
 	@echo "--- Verifying primitives (Ch, Parity, Maj) ---"
 	@$(SAW) sha1_verify_primitives.saw
+	@echo ""
+	@echo "--- Verifying single round functions ---"
+	@$(SAW) sha1_verify_single_round.saw
 	@echo ""
 	@echo "--- Running concrete tests ---"
 	@$(SAW) sha1_concrete_test.saw
