@@ -44,10 +44,10 @@ pbt: $(BITCODE)
 verify: $(BITCODE)
 	$(SAW) aes_verify.saw
 
-# CI verification - PBT only (random testing, lower memory than symbolic)
-# Full symbolic verification can OOM in constrained Docker environments
+# CI verification - both PBT and symbolic primitives
 verify-ci: $(BITCODE)
 	$(SAW) aes_pbt.saw
+	$(SAW) aes_verify.saw
 
 # Symbolic verification of key expansion (slow)
 # Verifies aes_key_setup for ALL possible 128-bit keys
