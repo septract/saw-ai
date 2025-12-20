@@ -157,6 +157,26 @@ makeH2_le q0 q1 = result
 
 // Compute whitening keys from subkey array
 computeWhiteningKeys : [16][16] -> ([32], [32], [32], [32])
+
+// ============================================================================
+// normalize64: Canonicalize 64-bit value term structure
+//
+// SAW's symbolic execution of union-based byte access creates terms like:
+//   append(append(..., slice(val, 24-31)), slice(val, 16-23)), ...)
+// This is semantically equivalent to val (when high 32 bits are zero), but
+// creates different term structure than Cryptol's zext/join operations.
+//
+// This function explicitly matches SAW's canonicalization:
+// 1. Extract low 32 bits
+// 2. Split into bytes (little-endian)
+// 3. Reassemble with zero high bits
+//
+// Used in encrypt_1989/decrypt_1989 to match SAW's term structure for
+// compositional verification with f_1989 uninterpreted.
+// ============================================================================
+normalize64 : [64] -> [64]
+normalize64 val = zext (makeH_le (dissH_le (drop`{32} val)))
+
 computeWhiteningKeys ks = (k89, k1011, k1213, k1415)
   where
     k89    = makeH2_le (ks@8)  (ks@9)
@@ -165,8 +185,140 @@ computeWhiteningKeys ks = (k89, k1011, k1213, k1415)
     k1415  = makeH2_le (ks@14) (ks@15)
 
 // ============================================================================
+// encrypt_1989: Encryption matching C's Encrypt function
+//
+// Takes pre-computed subkeys and whitening keys (as produced by SetKey)
+// Input: 8-byte plaintext, 16 subkeys, 4 whitening keys (as 64-bit C values)
+// Output: 8-byte ciphertext
+//
+// NOTE: Uses 64-bit values throughout to match C's HalfWord type exactly.
+// This enables SAW's compositional verification with f_ov override.
+// (Temporary: debugging step toward fully symbolic key verification)
+// ============================================================================
+
+encrypt_1989 : [8][8] -> [16][32] -> ([64], [64], [64], [64]) -> [8][8]
+encrypt_1989 plain_bytes ks (k89, k1011, k1213, k1415) = cipher_bytes
+  where
+    // Read plaintext as two 64-bit HalfWords (matching C's MakeH1)
+    // MakeH1 returns 64-bit with low 32 bits from bytes, high 32 = 0
+    l_init : [64]
+    l_init = zext (makeH_le (take`{4} plain_bytes))
+    r_init : [64]
+    r_init = zext (makeH_le (drop`{4} plain_bytes))
+
+    // Initial whitening with normalize64 to match SAW's term structure
+    // SAW normalizes after each XOR due to union byte access patterns
+    l0 = normalize64 (l_init ^ k89)
+    r0_tmp = normalize64 (r_init ^ k1011)
+    r0 = normalize64 (l0 ^ r0_tmp)
+
+    // 8 Feistel rounds using 64-bit values
+    // Note: SAW does NOT normalize between rounds - only the initial state
+    round : ([64], [64], [4]) -> ([64], [64])
+    round (l, r, i) = (r, newR)
+      where
+        // K[i] is 32-bit in C (zext'd from 16-bit subkey)
+        k_i = ks @ i
+        // f_1989 takes [64] and [32], returns [64]
+        f_result = f_1989 r k_i
+        newR = l ^ f_result
+
+    // Run 8 rounds
+    states : [9]([64], [64])
+    states = [(l0, r0)] # [ round (l, r, i) | (l, r) <- take`{8} states | i <- [0..7] ]
+
+    (l8, r8) = states @ 8
+
+    // Final operations (all 64-bit)
+    l8' = l8 ^ r8
+    r_out = r8 ^ k1213
+    l_out = l8' ^ k1415
+
+    // Output: DissH1(R, Cipher), DissH1(L, Cipher+4) - extract low 32 bits
+    cipher_bytes = dissH_le (drop`{32} r_out) # dissH_le (drop`{32} l_out)
+
+// ============================================================================
+// decrypt_1989: Decryption matching C's Decrypt function
+//
+// Takes pre-computed subkeys and whitening keys (as produced by SetKey)
+// Input: 8-byte ciphertext, 16 subkeys, 4 whitening keys (as 64-bit C values)
+// Output: 8-byte plaintext
+//
+// NOTE: Uses 64-bit values throughout to match C's HalfWord type exactly.
+// ============================================================================
+
+decrypt_1989 : [8][8] -> [16][32] -> ([64], [64], [64], [64]) -> [8][8]
+decrypt_1989 cipher_bytes ks (k89, k1011, k1213, k1415) = plain_bytes
+  where
+    // Read ciphertext as 64-bit HalfWords: R from bytes 0-3, L from bytes 4-7
+    r_init : [64]
+    r_init = zext (makeH_le (take`{4} cipher_bytes))
+    l_init : [64]
+    l_init = zext (makeH_le (drop`{4} cipher_bytes))
+
+    // Initial "whitening" with normalize64 to match SAW's term structure
+    // (reversed from encrypt's final operations)
+    r0 = normalize64 (r_init ^ k1213)
+    l0 = normalize64 (r0 ^ normalize64 (l_init ^ k1415))
+
+    // 8 Feistel rounds in reverse (K7 down to K0)
+    round : ([64], [64], [4]) -> ([64], [64])
+    round (l, r, i) = (newL, l)
+      where
+        k_i = ks @ i
+        f_result = f_1989 l k_i
+        newL = r ^ f_result
+
+    // Run 8 rounds with reversed key order
+    states : [9]([64], [64])
+    states = [(l0, r0)] # [ round (l, r, i) | (l, r) <- take`{8} states | i <- [7, 6 .. 0] ]
+
+    (l8, r8) = states @ 8
+
+    // Final operations (reversed from encrypt's initial operations)
+    r8' = r8 ^ l8
+    r_out = r8' ^ k1011
+    l_out = l8 ^ k89
+
+    // Output: DissH1(L, Plain), DissH1(R, Plain+4) - extract low 32 bits
+    plain_bytes = dissH_le (drop`{32} l_out) # dissH_le (drop`{32} r_out)
+
+// Convenience: encrypt with key bytes (computes key schedule internally)
+// Converts 16-bit subkeys to 32-bit and 32-bit whitening keys to 64-bit
+encryptWithKey_1989 : [8][8] -> [8][8] -> [8][8]
+encryptWithKey_1989 key_bytes plain_bytes = encrypt_1989 plain_bytes ks64 wk64
+  where
+    ks = keySchedule_1989 key_bytes
+    ks64 = [ zext k : [32] | k <- ks ]
+    wk = computeWhiteningKeys ks
+    wk64 = (zext wk.0, zext wk.1, zext wk.2, zext wk.3)
+
+// Convenience: decrypt with key bytes
+decryptWithKey_1989 : [8][8] -> [8][8] -> [8][8]
+decryptWithKey_1989 key_bytes cipher_bytes = decrypt_1989 cipher_bytes ks64 wk64
+  where
+    ks = keySchedule_1989 key_bytes
+    ks64 = [ zext k : [32] | k <- ks ]
+    wk = computeWhiteningKeys ks
+    wk64 = (zext wk.0, zext wk.1, zext wk.2, zext wk.3)
+
+// ============================================================================
 // Test properties
 // ============================================================================
+
+// Round-trip property
+property roundTrip_1989 key plain =
+    decryptWithKey_1989 key (encryptWithKey_1989 key plain) == plain
+
+// Test vector from C output
+testPlainBytes : [8][8]
+testPlainBytes = [0, 0, 0, 0, 0, 0, 0, 0]
+
+expectedCipherBytes : [8][8]
+expectedCipherBytes = [0xce, 0xef, 0x2c, 0x86, 0xf2, 0x49, 0x07, 0x52]
+
+property encryptTestVector =
+    encryptWithKey_1989 testKeyBytes testPlainBytes == expectedCipherBytes
 
 // Expected subkeys from C output for key 0x0123456789abcdef
 testKeyBytes : [8][8]
@@ -178,3 +330,119 @@ expected_C_subkeys = [0x3bdf, 0x36ca, 0x7cf1, 0xec1a, 0xa545, 0xc7b9, 0xeb26, 0x
 
 property keySchedule_1989_correct =
     keySchedule_1989 testKeyBytes == expected_C_subkeys
+
+// ============================================================================
+// Explicit unroll for encrypt_1989 - used for SAW simpset matching
+//
+// This defines the 8 rounds explicitly without recursion, matching how SAW
+// builds terms through symbolic execution.
+// ============================================================================
+
+// Explicit 8-round encryption matching SAW's term structure
+encrypt_1989_unrolled : [8][8] -> [16][32] -> ([64], [64], [64], [64]) -> [8][8]
+encrypt_1989_unrolled plain_bytes ks (k89, k1011, k1213, k1415) = cipher_bytes
+  where
+    // Initial state with SAW's normalize pattern
+    l_init = zext (makeH_le (take`{4} plain_bytes))
+    r_init = zext (makeH_le (drop`{4} plain_bytes))
+    l0 = normalize64 (l_init ^ k89)
+    r0 = normalize64 (l0 ^ normalize64 (r_init ^ k1011))
+
+    // Round 0
+    r1 = l0 ^ f_1989 r0 (ks@0)
+    l1 = r0
+
+    // Round 1
+    r2 = l1 ^ f_1989 r1 (ks@1)
+    l2 = r1
+
+    // Round 2
+    r3 = l2 ^ f_1989 r2 (ks@2)
+    l3 = r2
+
+    // Round 3
+    r4 = l3 ^ f_1989 r3 (ks@3)
+    l4 = r3
+
+    // Round 4
+    r5 = l4 ^ f_1989 r4 (ks@4)
+    l5 = r4
+
+    // Round 5
+    r6 = l5 ^ f_1989 r5 (ks@5)
+    l6 = r5
+
+    // Round 6
+    r7 = l6 ^ f_1989 r6 (ks@6)
+    l7 = r6
+
+    // Round 7
+    r8 = l7 ^ f_1989 r7 (ks@7)
+    l8 = r7
+
+    // Final operations
+    r_out = r8 ^ k1213
+    l_out = (l8 ^ r8) ^ k1415
+
+    // Output
+    cipher_bytes = dissH_le (drop`{32} r_out) # dissH_le (drop`{32} l_out)
+
+// Lemma: encrypt_1989 equals the unrolled form
+// This will be used as a simpset rule in SAW
+property encrypt_unroll_lemma plain_bytes ks wk =
+    encrypt_1989 plain_bytes ks wk == encrypt_1989_unrolled plain_bytes ks wk
+
+// ============================================================================
+// Explicit unroll for decrypt_1989
+// ============================================================================
+
+decrypt_1989_unrolled : [8][8] -> [16][32] -> ([64], [64], [64], [64]) -> [8][8]
+decrypt_1989_unrolled cipher_bytes ks (k89, k1011, k1213, k1415) = plain_bytes
+  where
+    // Initial state with SAW's normalize pattern (reversed from encrypt)
+    r_init = zext (makeH_le (take`{4} cipher_bytes))
+    l_init = zext (makeH_le (drop`{4} cipher_bytes))
+    r0 = normalize64 (r_init ^ k1213)
+    l0 = normalize64 (r0 ^ normalize64 (l_init ^ k1415))
+
+    // Round 0 (using K7)
+    l1 = r0 ^ f_1989 l0 (ks@7)
+    r1 = l0
+
+    // Round 1 (using K6)
+    l2 = r1 ^ f_1989 l1 (ks@6)
+    r2 = l1
+
+    // Round 2 (using K5)
+    l3 = r2 ^ f_1989 l2 (ks@5)
+    r3 = l2
+
+    // Round 3 (using K4)
+    l4 = r3 ^ f_1989 l3 (ks@4)
+    r4 = l3
+
+    // Round 4 (using K3)
+    l5 = r4 ^ f_1989 l4 (ks@3)
+    r5 = l4
+
+    // Round 5 (using K2)
+    l6 = r5 ^ f_1989 l5 (ks@2)
+    r6 = l5
+
+    // Round 6 (using K1)
+    l7 = r6 ^ f_1989 l6 (ks@1)
+    r7 = l6
+
+    // Round 7 (using K0)
+    l8 = r7 ^ f_1989 l7 (ks@0)
+    r8 = l7
+
+    // Final operations (reversed from encrypt's initial operations)
+    l_out = l8 ^ k89
+    r_out = (r8 ^ l8) ^ k1011
+
+    // Output
+    plain_bytes = dissH_le (drop`{32} l_out) # dissH_le (drop`{32} r_out)
+
+property decrypt_unroll_lemma cipher_bytes ks wk =
+    decrypt_1989 cipher_bytes ks wk == decrypt_1989_unrolled cipher_bytes ks wk

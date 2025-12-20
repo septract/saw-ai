@@ -9,6 +9,19 @@
 - If verification fails, fix the SAW script or Cryptol spec, not the C code
 - If a bug is found, document it - don't silently fix it
 
+## CRITICAL: Never Abandon Compositional Verification
+
+**NEVER fall back to direct symbolic execution of complex code when compositional verification fails.** This almost never works and causes extremely long execution times (hours to days) or timeouts.
+
+When compositional verification with overrides fails:
+1. Debug the override matching (term structure, types, global state)
+2. Check Cryptol spec alignment with C code structure
+3. Verify intermediate functions match before composing
+4. Use `w4_unint_z3` to keep functions abstract
+5. **Only attempt direct symbolic execution after explicit user instruction**
+
+The correct response to "override not matching" is to fix the spec or SAW script, not to remove the override and symbolically execute everything.
+
 ## SAW Formal Verification Setup
 
 This project uses SAW (Software Analysis Workbench) from Galois for formal verification of cryptographic code.

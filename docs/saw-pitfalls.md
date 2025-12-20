@@ -98,3 +98,20 @@ llvm_verify m "func" overrides false spec
 With compositional verification (overrides), the C primitives are replaced with Cryptol specs. The `w4_unint_z3` then keeps those Cryptol specs uninterpreted during the SMT proof.
 
 **Reference:** See [uninterpreted-functions-in-saw.md](uninterpreted-functions-in-saw.md) for details.
+
+## 5. ABC Solver Not Available (macOS)
+
+**Problem:** `abc: readCreateProcessWithExitCode: posix_spawnp: does not exist (No such file or directory)`
+
+**Root Cause:** The ABC solver binary is not included in SAW macOS distributions. Many SAW examples use `abc` as the default solver.
+
+**Solution:** Use `z3` instead of `abc`:
+```saw
+// Instead of:
+llvm_verify m "func" [] false spec abc;
+
+// Use:
+llvm_verify m "func" [] false spec z3;
+```
+
+**Note:** Z3 is a general-purpose SMT solver while ABC is optimized for circuit-based proofs. For most cryptographic verification, z3 works well.
