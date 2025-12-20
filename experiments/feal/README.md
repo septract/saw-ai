@@ -1,8 +1,11 @@
 # FEAL-8 SAW Verification
 
-Formal verification of the FEAL-8 block cipher - specifically, a 1989 C implementation with unions, globals, and a lazy-initialized lookup table.
+Formal verification of the FEAL-8 block cipher - specifically, an **LP64-patched** version of a 1989 C implementation with unions, globals, and a lazy-initialized lookup table.
 
 **Status: FULLY VERIFIED** (all functions, all keys, all messages)
+
+> **Note:** The original 1989 code contains undefined behavior on 64-bit systems (LP64).
+> We verify a patched version with zero-initialized unions. See [PROVENANCE.md](PROVENANCE.md).
 
 ## The Challenge
 
@@ -22,6 +25,7 @@ C code (1989)  ══SAW══►  feal8_1989.cry  ══Cryptol══►  feal8
 
 | Function | Symbolic Bits | Notes |
 |----------|---------------|-------|
+| Rot2 (init) | 8 | Verifies C loop builds correct lookup table |
 | Rot2, S0, S1 | 8-16 | Lookup table + S-boxes |
 | f, FK | 96-128 | Round function, key schedule function |
 | SetKey | 64 | All 2^64 keys verified |

@@ -492,6 +492,6 @@ property subkey_equiv key_bytes =
 
 // Verify test vectors match between specs
 property test_vectors_match =
-    toBlock expectedCipherBytes == testCiphertext
+    toBlock expectedCipherBytes == testCiphertext_1989
   where
-    testCiphertext = encrypt (toBlock testKeyBytes) (toBlock testPlainBytes)
+    testCiphertext_1989 = encrypt (toBlock testKeyBytes) (toBlock testPlainBytes)

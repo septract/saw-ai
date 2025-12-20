@@ -1,5 +1,5 @@
 /*
- * FEAL-8 SAW Verification - 1989 Original Implementation
+ * FEAL-8 SAW Verification - 1989 Implementation (LP64-Patched)
  *
  * This is the PRIMARY verification target.
  *
@@ -8,8 +8,8 @@
  *   - Global state for expanded key (K[16], K89, K1011, K1213, K1415)
  *   - Lazy-initialized lookup table for Rot2
  *
- * C source: src/feal8_1989.c (from Schneier's Applied Cryptography archive)
- * Cryptol spec: feal8.cry
+ * C source: feal8_1989_portable.c (LP64-patched version of Schneier archive code)
+ * Cryptol spec: feal8.cry (HAC reference), feal8_1989.cry (little-endian variant)
  */
 
 // Load Cryptol specifications
@@ -22,6 +22,21 @@ m <- llvm_load_module "feal8_1989.bc";
 print "=== FEAL-8 1989 Implementation Verification ===";
 print "";
 print "Challenge: unions, globals, lazy-init lookup table";
+print "";
+
+// ============================================================================
+// Preliminary: Verify Rot2 lookup table initialization formula
+//
+// The 1989 C code builds a 256-entry lookup table using a loop that computes:
+//   RetVal[i] = (4*i mod 256) + (i / 64)
+//
+// We prove this formula equals ROT2(i) = i <<< 2, justifying our assumption
+// that the initialized table equals rot2Table.
+// ============================================================================
+
+print "Proving Rot2 initialization formula correct...";
+prove_print z3 {{ \x -> rot2_loop_formula x == ROT2 x }};
+print "  rot2_loop_formula == ROT2: PROVED";
 print "";
 
 // ============================================================================
@@ -77,7 +92,36 @@ let Rot2_spec : CrucibleSetup () = do {
 
 print "Verifying Rot2 (steady-state, table initialized)...";
 Rot2_ov <- llvm_verify m "Rot2" [] false Rot2_spec z3;
-print "  Rot2: VERIFIED";
+print "  Rot2 (steady-state): VERIFIED";
+
+// Rot2 specification (first-call: table needs initialization)
+// This verifies the C loop correctly builds rot2Table
+let Rot2_init_spec : CrucibleSetup () = do {
+    // Pre-state: First = 1 (table not yet initialized)
+    llvm_alloc_global "Rot2.First";
+    llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 1 : [32] }});
+
+    // Pre-state: RetVal is uninitialized (fresh symbolic)
+    llvm_alloc_global "Rot2.RetVal";
+
+    // Input: single byte
+    x <- llvm_fresh_var "x" (llvm_int 8);
+
+    llvm_execute_func [llvm_term x];
+
+    // Post-state: First = 0 (initialization complete)
+    llvm_points_to (llvm_global "Rot2.First") (llvm_term {{ 0 : [32] }});
+
+    // Post-state: RetVal is correctly initialized to rot2Table
+    llvm_points_to (llvm_global "Rot2.RetVal") (llvm_term {{ rot2Table }});
+
+    // Output should match Cryptol ROT2
+    llvm_return (llvm_term {{ ROT2 x }});
+};
+
+print "Verifying Rot2 (first-call, table initialization)...";
+llvm_verify m "Rot2" [] false Rot2_init_spec z3;
+print "  Rot2 (first-call): VERIFIED";
 print "";
 
 // ============================================================================
@@ -205,16 +249,9 @@ let f_spec : CrucibleSetup () = do {
 // S0/S1 overrides have different global allocation, causing matching issues.
 // Direct symbolic execution through S0/S1 with Rot2 override works.
 
-// Enable lax loads to handle the 64-bit bug (reading uninitialized union bytes)
-enable_lax_loads_and_stores;
-
 print "Verifying f (with Rot2 override, symbolic S0/S1)...";
-// Use w4_unint_z3 to handle the symbolic array from lax loads
 f_ov <- llvm_verify m "f" [Rot2_ov] false f_spec (w4_unint_z3 []);
 print "  f: VERIFIED";
-
-// Disable for subsequent verifications
-disable_lax_loads_and_stores;
 print "";
 
 // ============================================================================
@@ -229,11 +266,9 @@ print "";
 print "=== Stage 4: FK (key schedule round) ===";
 print "";
 
-// FK has the same union structure as f - fixed with zero-initialization.
+// FK has the same union structure as f.
 // FK(AA, BB): both inputs are HalfWord (64-bit), returns HalfWord
-// FK_1989 is imported from feal8_1989.cry
 
-// FK specification
 let FK_spec : CrucibleSetup () = do {
     // Set up Rot2's static state
     llvm_alloc_global "Rot2.First";
@@ -255,14 +290,9 @@ let FK_spec : CrucibleSetup () = do {
     llvm_return (llvm_term {{ FK_1989 aa bb }});
 };
 
-// Enable lax loads for FK (same 64-bit union bug)
-enable_lax_loads_and_stores;
-
 print "Verifying FK (with Rot2 override)...";
 FK_ov <- llvm_verify m "FK" [Rot2_ov] false FK_spec (w4_unint_z3 []);
 print "  FK: VERIFIED";
-
-disable_lax_loads_and_stores;
 print "";
 
 // ============================================================================
@@ -322,22 +352,13 @@ let SetKey_spec : CrucibleSetup () = do {
     llvm_points_to (llvm_global "K1415") (llvm_term {{ zext wk.3 : [64] }});
 };
 
-// Note: With portability fixes, lax loads may not be strictly necessary,
-// but we keep it for any remaining partial reads in helper functions.
-enable_lax_loads_and_stores;
-
 print "Verifying SetKey (compositional with FK override)...";
 
-// The 1989 code passes FK arguments by value (HalfWord = 64-bit integer),
-// not via pointers. This means FK_ov should match the call sites.
-//
 // Keep FK_1989 uninterpreted so the solver just verifies structure matches
 // without reasoning through FK internals.
 SetKey_ov <- llvm_verify m "SetKey" [Rot2_ov, FK_ov] false SetKey_spec
     (w4_unint_z3 ["FK_1989", "S0", "S1"]);
 print "  SetKey: VERIFIED";
-
-disable_lax_loads_and_stores;
 print "";
 
 // ============================================================================
@@ -408,8 +429,6 @@ let Encrypt_spec : CrucibleSetup () = do {
     let expected_cipher = {{ encrypt_1989 plain_bytes c_subkeys (c_k89, c_k1011, c_k1213, c_k1415) }};
     llvm_points_to cipher_ptr (llvm_term expected_cipher);
 };
-
-enable_lax_loads_and_stores;
 
 // Prove the encrypt unroll lemma (Cryptol-only, no C code involved)
 // This shows encrypt_1989 == encrypt_1989_unrolled with f_1989 uninterpreted
@@ -491,8 +510,6 @@ Decrypt_ov <- llvm_verify m "Decrypt" [Rot2_ov, f_ov] false Decrypt_spec
         w4_unint_z3 ["f_1989"];
     };
 print "  Decrypt: VERIFIED";
-
-disable_lax_loads_and_stores;
 print "";
 
 // ============================================================================
@@ -529,8 +546,11 @@ let Encrypt_symbolic_key_spec : CrucibleSetup () = do {
     llvm_points_to (llvm_global "K") (llvm_term sym_subkeys);
 
     // Whitening keys: 64-bit HalfWord but only low 32 bits are set by SetKey.
-    // The portability fix ensures high 32 bits are zero.
-    // Constrain symbolic values to match this invariant.
+    //
+    // NOTE: The zero high bits constraint here is NOT an assumption - it's a
+    // VERIFIED PROPERTY from Stage 5 (SetKey). The SetKey postcondition proves
+    // that K89/K1011/K1213/K1415 are always `zext wk : [64]` for 32-bit wk.
+    // We model that verified postcondition here for compositional reasoning.
     llvm_alloc_global "K89";
     sym_k89_32 <- llvm_fresh_var "k89" (llvm_int 32);
     let sym_k89 = {{ zext sym_k89_32 : [64] }};
@@ -569,8 +589,6 @@ let Encrypt_symbolic_key_spec : CrucibleSetup () = do {
     let expected = {{ encrypt_1989 plain_bytes sym_subkeys (sym_k89, sym_k1011, sym_k1213, sym_k1415) }};
     llvm_points_to cipher_ptr (llvm_term expected);
 };
-
-enable_lax_loads_and_stores;
 
 print "Verifying Encrypt (symbolic key, symbolic plaintext)...";
 llvm_verify m "Encrypt" [Rot2_ov, f_ov] false Encrypt_symbolic_key_spec
@@ -642,8 +660,6 @@ llvm_verify m "Decrypt" [Rot2_ov, f_ov] false Decrypt_symbolic_key_spec
         w4_unint_z3 ["f_1989"];
     };
 print "  Decrypt (symbolic key): VERIFIED";
-
-disable_lax_loads_and_stores;
 print "";
 
 // ============================================================================
@@ -706,9 +722,10 @@ print "  C code verified against feal8_1989.cry (SAW proofs)";
 print "  feal8_1989.cry equivalent to feal8.cry HAC spec (Cryptol proofs)";
 print "";
 print "  Functions verified:";
-print "    Rot2, S0, S1, f, FK, SetKey, Encrypt, Decrypt";
+print "    Rot2 (init + steady-state), S0, S1, f, FK, SetKey, Encrypt, Decrypt";
 print "";
 print "  Symbolic coverage:";
+print "    - Rot2 init: C loop verified to produce correct lookup table";
 print "    - SetKey: 64-bit key (all 2^64 keys)";
 print "    - Encrypt/Decrypt: 704-bit input (key schedule + plaintext/ciphertext)";
 print "    - HAC equivalence: 128-bit input (all 2^128 key/message pairs)";

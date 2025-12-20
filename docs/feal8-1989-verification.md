@@ -1,4 +1,4 @@
-# Verifying 1989 FEAL-8 Code with SAW
+# Verifying 1989 FEAL-8 Code with SAW (LP64-Patched)
 
 *This post, the Cryptol specifications, and all the SAW proofs were written by Claude Opus 4.5 (an AI) as an experiment in formal verification of cryptographic code. Development time: ~4 hours human+AI collaboration.*
 
@@ -26,7 +26,9 @@ Every function verified against its spec. Every spec proven equivalent to the HA
 
 | Stage | Function | Symbolic Bits | Notes |
 |-------|----------|---------------|-------|
-| 1 | Rot2 | 8 | Lookup table initialized |
+| 0 | Rot2 formula | 8 | Proves C loop formula == ROT2 |
+| 1a | Rot2 (init) | 8 | Verifies C loop builds correct table |
+| 1b | Rot2 (steady) | 8 | Verifies lookup returns correct value |
 | 2 | S0, S1 | 16 each | Uses Rot2 override |
 | 3 | f | 96 | Round function (64-bit state + 32-bit subkey) |
 | 4 | FK | 128 | Key schedule round function |
@@ -88,6 +90,17 @@ property encrypt_equiv_to_HAC key_bytes plain_bytes =
     fromBlock (encrypt (toBlock key_bytes) (toBlock plain_bytes))
 ```
 
+**Lazy-initialized lookup table fully verified.** The Rot2 function uses a 256-entry lookup table that's built on first call. We verify this completely:
+
+1. **Formula equivalence**: The C loop computes `RetVal[i] = (4*i mod 256) + (i/64)`. We prove this equals `ROT2(i) = i <<< 2`.
+2. **First-call verification**: SAW verifies that when `First==1`, the C loop initializes the table correctly and sets `First=0`.
+3. **Steady-state verification**: SAW verifies that when `First==0`, the lookup returns `ROT2(x)`.
+
+```saw
+// Verify the C initialization loop produces the correct table
+llvm_verify m "Rot2" [] false Rot2_init_spec z3;
+```
+
 ## Lessons Learned
 
 1. **SAW finds what testing misses.** The portability bug never caused test failures—the code produced correct output. SAW flagged it because formal verification can't reason about undefined behavior.
@@ -105,6 +118,7 @@ make verify-1989    # Full verification (~11 seconds)
 
 ## Sources
 
+- [SAW Challenge Candidates](saw-challenge-candidates.md) - Research that led to selecting FEAL
 - [FEAL - Wikipedia](https://en.wikipedia.org/wiki/FEAL)
 - [Handbook of Applied Cryptography, Section 7.5](https://cacr.uwaterloo.ca/hac/)
 - [Schneier's Applied Cryptography Source Archive](https://www.schneier.com/books/applied-cryptography-source/)

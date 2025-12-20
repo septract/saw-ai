@@ -242,6 +242,19 @@ property correctness key msg = decrypt key (encrypt key msg) == msg
 property s0_example = S0 0x00 0x00 == 0x00
 property s1_example = S1 0x00 0x00 == 0x04  // ROT2(1) = 4
 
+// Rot2 lookup table initialization formula
+// The 1989 C code builds a lookup table using:
+//   High = (4 * i) mod 256, Low = i / 64
+//   RetVal[i] = High + Low
+// This is equivalent to ROT2(i) = i <<< 2
+rot2_loop_formula : Byte -> Byte
+rot2_loop_formula i = high + low
+  where
+    high = (i << 2)         // (4 * i) mod 256
+    low  = (i >> 6)         // i / 64
+
+property rot2_init_correct x = rot2_loop_formula x == ROT2 x
+
 // Test with zeros
 property encrypt_zeros = encrypt 0 0 == encrypt 0 0  // Placeholder
 
