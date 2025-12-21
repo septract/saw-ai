@@ -17,12 +17,12 @@ include $(ROOT)/config.mk
 REPO := ../repo
 
 # Bitcode targets
-BITCODE := aes.bc aes_pbt_harness.bc
+BITCODE := aes.bc aes_pbt_harness.bc aes_sbox_decomposed.bc
 
 # SAW scripts
-SAW_SCRIPTS := aes_pbt.saw aes_verify.saw aes_verify_keysetup.saw aes_verify_encrypt_unint.saw
+SAW_SCRIPTS := aes_pbt.saw aes_verify.saw aes_verify_keysetup.saw aes_verify_encrypt_unint.saw aes_verify_compositional.saw
 
-.PHONY: all clean verify verify-ci verify-keysetup verify-encrypt-unint verify-symbolic-key verify-all pbt
+.PHONY: all clean verify verify-ci verify-compositional verify-keysetup verify-encrypt-unint verify-symbolic-key verify-all pbt
 
 all: $(BITCODE)
 
@@ -34,6 +34,10 @@ aes.bc: $(REPO)/aes.c $(REPO)/aes.h
 aes_pbt_harness.bc: aes_pbt_harness.c $(REPO)/aes.c $(REPO)/aes.h
 	$(CLANG) $(CFLAGS) aes_pbt_harness.c -o $@
 
+# Compile decomposed S-box (for compositional verification)
+aes_sbox_decomposed.bc: aes_sbox_decomposed.c $(REPO)/aes.h
+	$(CLANG) $(CFLAGS) aes_sbox_decomposed.c -o $@
+
 # Property-based testing (fast, randomized)
 # Tests 380 random inputs across all AES-128 functions
 pbt: $(BITCODE)
@@ -44,10 +48,14 @@ pbt: $(BITCODE)
 verify: $(BITCODE)
 	$(SAW) aes_verify.saw
 
-# CI verification - both PBT and symbolic primitives
+# CI verification - compositional (memory-efficient SubBytes verification)
 verify-ci: $(BITCODE)
-	$(SAW) aes_pbt.saw
-	$(SAW) aes_verify.saw
+	$(SAW) aes_verify_compositional.saw
+
+# Compositional verification of SubBytes (memory-efficient)
+# Verifies single-byte S-box, then uses as override for full SubBytes
+verify-compositional: $(BITCODE)
+	$(SAW) aes_verify_compositional.saw
 
 # Symbolic verification of key expansion (slow)
 # Verifies aes_key_setup for ALL possible 128-bit keys

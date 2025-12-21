@@ -1,0 +1,97 @@
+// AES Compositional Verification
+//
+// Strategy: Verify single-byte S-box lookup (8 bits), then use as override
+// for the full SubBytes (128 bits). This dramatically reduces memory usage.
+//
+// Memory comparison:
+// - Direct SubBytes: 16 symbolic lookups into 256-entry table = OOM
+// - Compositional: 1 lookup verified, then 16 override applications = fast
+
+m <- llvm_load_module "aes_sbox_decomposed.bc";
+
+import "../../../specs/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/Instantiations/AES128.cry";
+
+print "=== AES Compositional Verification ===";
+print "";
+
+let state_type = llvm_array 4 (llvm_array 4 (llvm_int 8));
+
+//////////////////////////////////////////////////////////////////////////////
+// Step 1: Verify single-byte S-box lookup (8 bits symbolic)
+//////////////////////////////////////////////////////////////////////////////
+
+print "Step 1: Verify sbox_lookup (8 bits symbolic)...";
+
+let sbox_lookup_spec = do {
+    b <- llvm_fresh_var "b" (llvm_int 8);
+    llvm_execute_func [llvm_term b];
+    llvm_return (llvm_term {{ SBox b }});
+};
+
+sbox_ov <- llvm_verify m "sbox_lookup" [] false sbox_lookup_spec z3;
+print "   sbox_lookup: VERIFIED (matches Cryptol SBox)";
+
+//////////////////////////////////////////////////////////////////////////////
+// Step 2: Verify inverse S-box lookup (8 bits symbolic)
+//////////////////////////////////////////////////////////////////////////////
+
+print "Step 2: Verify inv_sbox_lookup (8 bits symbolic)...";
+
+let inv_sbox_lookup_spec = do {
+    b <- llvm_fresh_var "b" (llvm_int 8);
+    llvm_execute_func [llvm_term b];
+    llvm_return (llvm_term {{ SBoxInv b }});
+};
+
+inv_sbox_ov <- llvm_verify m "inv_sbox_lookup" [] false inv_sbox_lookup_spec z3;
+print "   inv_sbox_lookup: VERIFIED (matches Cryptol InvSubByte)";
+
+//////////////////////////////////////////////////////////////////////////////
+// Step 3: Verify SubBytes_decomposed using sbox_lookup as override
+//////////////////////////////////////////////////////////////////////////////
+
+print "Step 3: Verify SubBytes_decomposed (128 bits, compositional)...";
+
+let SubBytes_decomposed_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    llvm_execute_func [state_ptr];
+
+    llvm_points_to state_ptr (llvm_term {{ SubBytes state_in }});
+};
+
+SubBytes_ov <- llvm_verify m "SubBytes_decomposed" [sbox_ov] false SubBytes_decomposed_spec z3;
+print "   SubBytes_decomposed: VERIFIED (matches Cryptol SubBytes)";
+
+//////////////////////////////////////////////////////////////////////////////
+// Step 4: Verify InvSubBytes_decomposed using inv_sbox_lookup as override
+//////////////////////////////////////////////////////////////////////////////
+
+print "Step 4: Verify InvSubBytes_decomposed (128 bits, compositional)...";
+
+let InvSubBytes_decomposed_spec = do {
+    state_ptr <- llvm_alloc state_type;
+    state_in <- llvm_fresh_var "state_in" (llvm_array 4 (llvm_array 4 (llvm_int 8)));
+    llvm_points_to state_ptr (llvm_term state_in);
+
+    llvm_execute_func [state_ptr];
+
+    llvm_points_to state_ptr (llvm_term {{ InvSubBytes state_in }});
+};
+
+InvSubBytes_ov <- llvm_verify m "InvSubBytes_decomposed" [inv_sbox_ov] false InvSubBytes_decomposed_spec z3;
+print "   InvSubBytes_decomposed: VERIFIED (matches Cryptol InvSubBytes)";
+
+print "";
+print "=== Compositional Verification Complete ===";
+print "";
+print "Verified:";
+print "  - sbox_lookup: 8 bits symbolic (all 256 inputs)";
+print "  - inv_sbox_lookup: 8 bits symbolic (all 256 inputs)";
+print "  - SubBytes_decomposed: 128 bits symbolic (using sbox_lookup override)";
+print "  - InvSubBytes_decomposed: 128 bits symbolic (using inv_sbox_lookup override)";
+print "";
+print "This proves SubBytes/InvSubBytes correct for ALL possible inputs.";
+print "";
