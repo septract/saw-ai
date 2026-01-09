@@ -155,3 +155,78 @@ uint32_t xor_reduce(uint32_t* arr, size_t n) {
     }
     return result;
 }
+
+/* ============================================================
+ * Example 8: Fibonacci (REQUIRES breakpoint - unbounded n)
+ *
+ * Computes fib(n) iteratively. Cannot be unrolled because n is symbolic.
+ *
+ * Invariant: At iteration i, (a, b) = (fib(i), fib(i+1))
+ * After n iterations: a = fib(n)
+ *
+ * We avoid temp variables by using simultaneous assignment pattern:
+ * new_a = b, new_b = a + b
+ * ============================================================ */
+
+extern uint64_t __breakpoint__fib_inv(uint64_t*, uint64_t*, size_t*, size_t*)
+    __attribute__((noduplicate));
+
+uint64_t fib(size_t n) {
+    uint64_t a = 0;
+    uint64_t b = 1;
+    for (size_t i = 0; __breakpoint__fib_inv(&a, &b, &n, &i), i < n; ++i) {
+        // Compute new values using old a before updating
+        b = a + b;  // new_b = old_a + old_b
+        a = b - a;  // new_a = new_b - old_a = old_b
+    }
+    return a;
+}
+
+/* ============================================================
+ * Example 9: Power/Exponentiation (REQUIRES breakpoint - unbounded n)
+ *
+ * Computes base^n via repeated multiplication.
+ * Cannot be unrolled because n is symbolic.
+ *
+ * Invariant: result * base^(n-i) = base^n
+ * At iteration i: result = base^i
+ *
+ * Variables: base, result, n, i
+ * ============================================================ */
+
+extern uint64_t __breakpoint__power_inv(uint64_t*, uint64_t*, size_t*, size_t*)
+    __attribute__((noduplicate));
+
+uint64_t power(uint64_t base, size_t n) {
+    uint64_t result = 1;
+    for (size_t i = 0; __breakpoint__power_inv(&base, &result, &n, &i), i < n; ++i) {
+        result = result * base;
+    }
+    return result;
+}
+
+/* ============================================================
+ * Example 10: GCD by subtraction (REQUIRES breakpoint - while loop)
+ *
+ * Euclidean algorithm variant using subtraction.
+ * Loop bound is data-dependent - cannot be unrolled.
+ *
+ * Invariant: gcd(a, b) = gcd(a_original, b_original)
+ * The GCD is preserved through each subtraction.
+ *
+ * Variables: a, b (converging values)
+ * ============================================================ */
+
+extern uint64_t __breakpoint__gcd_inv(uint64_t*, uint64_t*)
+    __attribute__((noduplicate));
+
+uint64_t gcd_subtract(uint64_t a, uint64_t b) {
+    while (__breakpoint__gcd_inv(&a, &b), a != b) {
+        if (a > b) {
+            a = a - b;
+        } else {
+            b = b - a;
+        }
+    }
+    return a;
+}

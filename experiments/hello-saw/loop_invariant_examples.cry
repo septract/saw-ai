@@ -132,3 +132,49 @@ xor_rest acc arr i =
     | i == 2 then acc ^ arr@2 ^ arr@3
     | i == 3 then acc ^ arr@3
     else acc
+
+
+// ============================================================
+// Example 8: Fibonacci (REQUIRES breakpoint)
+// ============================================================
+
+// For Fibonacci, the invariant is: (a, b) = (fib(i), fib(i+1))
+// We verify the STEP: if (a,b,i) satisfies the invariant,
+// then (b, a+b, i+1) also satisfies it.
+//
+// We don't need to express fib(n) directly - we just verify
+// the recurrence relation is preserved.
+//
+// The C code does: b' = a + b; a' = b (using subtraction trick)
+// So we verify: fib_step(a, b) returns what the next state should be.
+fib_step : [64] -> [64] -> [64]
+fib_step a b = b  // After one iteration, new_a = old_b
+
+
+// ============================================================
+// Example 9: Power/Exponentiation (REQUIRES breakpoint)
+// ============================================================
+
+// For power, the invariant is: result = base^i
+// After one iteration: result' = result * base = base^(i+1)
+//
+// We verify the step preserves the invariant.
+power_step : [64] -> [64] -> [64]
+power_step result base = result * base
+
+
+// ============================================================
+// Example 10: GCD by subtraction (REQUIRES breakpoint)
+// ============================================================
+
+// For GCD, the invariant is: gcd(a, b) = gcd(original_a, original_b)
+// The key property: gcd(a-b, b) = gcd(a, b) when a > b
+//                   gcd(a, b-a) = gcd(a, b) when b > a
+//
+// We verify this algebraic property holds.
+// After one step: (a', b') where gcd(a', b') = gcd(a, b)
+gcd_step_a : [64] -> [64] -> [64]
+gcd_step_a a b = if a > b then a - b else a
+
+gcd_step_b : [64] -> [64] -> [64]
+gcd_step_b a b = if a > b then b else b - a
