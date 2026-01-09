@@ -1,0 +1,306 @@
+/*
+ * Loop Invariant Examples - SAW Verification Script
+ *
+ * Demonstrates SAW's __breakpoint__ mechanism for loop invariants.
+ * Examples progress from simple to complex.
+ *
+ * Run: saw loop_invariant_examples.saw
+ */
+
+print "=============================================================";
+print "Loop Invariant Examples - Simple to Complex";
+print "=============================================================";
+print "";
+
+import "loop_invariant_examples.cry";
+
+m <- llvm_load_module "loop_invariant_examples.bc";
+
+// Helper: allocate and initialize a pointer to a fresh variable
+let ptr_to_fresh name ty = do {
+    p <- llvm_alloc ty;
+    x <- llvm_fresh_var name ty;
+    llvm_points_to p (llvm_term x);
+    return (p, x);
+};
+
+// ============================================================
+// Example 1: Simple breakpoint (no loop)
+// Demonstrates basic breakpoint mechanics
+// ============================================================
+
+print "--- Example 1: add2 (simple breakpoint, no loop) ---";
+
+let add2_spec = do {
+    x <- llvm_fresh_var "x" (llvm_int 64);
+    llvm_execute_func [llvm_term x];
+    llvm_return (llvm_term {{ x + 2 }});
+};
+
+// Breakpoint spec: from breakpoint to return, adds 1 more
+let add2_inv_spec = do {
+    (px, x) <- ptr_to_fresh "x" (llvm_int 64);
+    llvm_execute_func [px];
+    llvm_return (llvm_term {{ x + 1 }});
+};
+
+// Verify breakpoint directly (no assume needed - no loop)
+add2_inv <- llvm_verify m "__breakpoint__add2_inv#add2" [] false add2_inv_spec z3;
+print "  Breakpoint verified";
+
+// Verify full function using breakpoint as override
+llvm_verify m "add2" [add2_inv] false add2_spec z3;
+print "  add2: VERIFIED";
+print "";
+
+// ============================================================
+// Example 2: Basic counting loop
+// Classic loop invariant: c + (n - i) = n
+// ============================================================
+
+print "--- Example 2: count_n (basic counting loop) ---";
+
+let count_n_spec = do {
+    n <- llvm_fresh_var "n" (llvm_int 64);
+    llvm_execute_func [llvm_term n];
+    llvm_return (llvm_term {{ count_n n }});
+};
+
+// Invariant: c + (n - i) = final result
+let count_inv_spec = do {
+    (pn, n) <- ptr_to_fresh "n" (llvm_int 64);
+    (pc, c) <- ptr_to_fresh "c" (llvm_int 64);
+    (pi, i) <- ptr_to_fresh "i" (llvm_int 64);
+    llvm_precond {{ i <= n }};
+    llvm_execute_func [pn, pc, pi];
+    llvm_return (llvm_term {{ count_rest n c i }});
+};
+
+// Assume the invariant (partial correctness - assumes termination)
+count_inv <- llvm_unsafe_assume_spec m "__breakpoint__count_inv#count_n" count_inv_spec;
+print "  Invariant assumed (partial correctness)";
+
+// Verify invariant is preserved across one iteration
+llvm_verify m "__breakpoint__count_inv#count_n" [count_inv] false count_inv_spec z3;
+print "  Invariant preservation verified";
+
+// Verify full function using invariant as override
+llvm_verify m "count_n" [count_inv] false count_n_spec z3;
+print "  count_n: VERIFIED";
+print "";
+
+// ============================================================
+// Example 3: Sum of array (fixed size 4)
+// Demonstrates breakpoint with array pointer
+// NOTE: For arrays, we verify execution correctness (loop terminates
+// properly) rather than functional specs, matching SAW's test suite.
+// ============================================================
+
+print "--- Example 3: sum_array (array with 4 elements) ---";
+
+let len = 4;
+
+// Full function spec - verifies execution with symbolic array
+let sum_array_spec = do {
+    (pa, a) <- ptr_to_fresh "a" (llvm_array len (llvm_int 32));
+    let n = llvm_term {{ `len : [64] }};
+    llvm_execute_func [pa, n];
+    // Return value is sum of array elements
+    llvm_return (llvm_term {{ sum_array a }});
+};
+
+// Invariant spec for breakpoint - tracks loop state
+let sum_inv_spec = do {
+    // Array and pointer-to-array-pointer
+    (pa, a) <- ptr_to_fresh "a" (llvm_array len (llvm_int 32));
+    ppa <- llvm_alloc (llvm_int 64);
+    llvm_points_to ppa pa;
+
+    // Loop bound (constant)
+    let n = llvm_term {{ `len : [64] }};
+    pn <- llvm_alloc (llvm_int 64);
+    llvm_points_to pn n;
+
+    // Accumulator and index
+    (psum, sum) <- ptr_to_fresh "sum" (llvm_int 32);
+    (pi, i) <- ptr_to_fresh "i" (llvm_int 64);
+
+    llvm_precond {{ i <= `len }};
+
+    llvm_execute_func [ppa, pn, psum, pi];
+
+    // Invariant: sum + remaining elements = total
+    llvm_return (llvm_term {{ sum_rest sum a i }});
+};
+
+sum_inv <- llvm_unsafe_assume_spec m "__breakpoint__sum_inv#sum_array" sum_inv_spec;
+print "  Invariant assumed";
+
+llvm_verify m "__breakpoint__sum_inv#sum_array" [sum_inv] false sum_inv_spec z3;
+print "  Invariant preservation verified";
+
+llvm_verify m "sum_array" [sum_inv] false sum_array_spec z3;
+print "  sum_array: VERIFIED";
+print "";
+
+// ============================================================
+// Example 4: Two accumulators
+// a increases by 1, b increases by 2 each iteration
+// ============================================================
+
+print "--- Example 4: dual_accumulate (two accumulators) ---";
+
+let dual_spec = do {
+    a <- llvm_fresh_var "a" (llvm_int 64);
+    n <- llvm_fresh_var "n" (llvm_int 64);
+    llvm_execute_func [llvm_term a, llvm_term n];
+    llvm_return (llvm_term {{ dual_accumulate a n }});
+};
+
+// Invariant: tracks both a and b through iterations
+let dual_inv_spec = do {
+    (pa, a) <- ptr_to_fresh "a" (llvm_int 64);
+    (pb, b) <- ptr_to_fresh "b" (llvm_int 64);
+    (pn, n) <- ptr_to_fresh "n" (llvm_int 64);
+    (pi, i) <- ptr_to_fresh "i" (llvm_int 64);
+    llvm_precond {{ i <= n }};
+    llvm_execute_func [pa, pb, pn, pi];
+    llvm_return (llvm_term {{ dual_rest a b n i }});
+};
+
+dual_inv <- llvm_unsafe_assume_spec m "__breakpoint__dual_inv#dual_accumulate" dual_inv_spec;
+print "  Invariant assumed";
+
+llvm_verify m "__breakpoint__dual_inv#dual_accumulate" [dual_inv] false dual_inv_spec z3;
+print "  Invariant preservation verified";
+
+llvm_verify m "dual_accumulate" [dual_inv] false dual_spec z3;
+print "  dual_accumulate: VERIFIED";
+print "";
+
+// ============================================================
+// Example 5: Fixed iteration loop (4 iterations)
+// Adds 10 each iteration: x + 40
+// ============================================================
+
+print "--- Example 5: add_fixed_4 (fixed 4 iterations) ---";
+
+let fixed_spec = do {
+    x <- llvm_fresh_var "x" (llvm_int 32);
+    llvm_execute_func [llvm_term x];
+    llvm_return (llvm_term {{ add_fixed_4 x }});
+};
+
+// Invariant: x + 10*(4-i)
+let fixed_inv_spec = do {
+    (px, x) <- ptr_to_fresh "x" (llvm_int 32);
+    (pi, i) <- ptr_to_fresh "i" (llvm_int 64);
+    llvm_precond {{ i <= 4 }};
+    llvm_execute_func [px, pi];
+    llvm_return (llvm_term {{ fixed_rest x i }});
+};
+
+fixed_inv <- llvm_unsafe_assume_spec m "__breakpoint__fixed_inv#add_fixed_4" fixed_inv_spec;
+print "  Invariant assumed";
+
+llvm_verify m "__breakpoint__fixed_inv#add_fixed_4" [fixed_inv] false fixed_inv_spec z3;
+print "  Invariant preservation verified";
+
+llvm_verify m "add_fixed_4" [fixed_inv] false fixed_spec z3;
+print "  add_fixed_4: VERIFIED";
+print "";
+
+// ============================================================
+// Example 6: Transform x = x*2 + 1 (3 iterations)
+// Result: x*8 + 7
+// ============================================================
+
+print "--- Example 6: transform_3 (x = x*2 + 1, three times) ---";
+
+let transform_spec = do {
+    x <- llvm_fresh_var "x" (llvm_int 32);
+    llvm_execute_func [llvm_term x];
+    llvm_return (llvm_term {{ transform_3 x }});
+};
+
+// Invariant: transform_rest gives result after remaining iterations
+let transform_inv_spec = do {
+    (px, x) <- ptr_to_fresh "x" (llvm_int 32);
+    (pi, i) <- ptr_to_fresh "i" (llvm_int 64);
+    llvm_precond {{ i <= 3 }};
+    llvm_execute_func [px, pi];
+    llvm_return (llvm_term {{ transform_rest x i }});
+};
+
+transform_inv <- llvm_unsafe_assume_spec m "__breakpoint__transform_inv#transform_3" transform_inv_spec;
+print "  Invariant assumed";
+
+llvm_verify m "__breakpoint__transform_inv#transform_3" [transform_inv] false transform_inv_spec z3;
+print "  Invariant preservation verified";
+
+llvm_verify m "transform_3" [transform_inv] false transform_spec z3;
+print "  transform_3: VERIFIED";
+print "";
+
+// ============================================================
+// Example 7: XOR reduction (fixed size 4)
+// Common crypto operation - XOR all elements
+// ============================================================
+
+print "--- Example 7: xor_reduce (XOR reduction, 4 elements) ---";
+
+let xor_len = 4;
+
+let xor_spec = do {
+    (pa, a) <- ptr_to_fresh "a" (llvm_array xor_len (llvm_int 32));
+    let n = llvm_term {{ `xor_len : [64] }};
+    llvm_execute_func [pa, n];
+    llvm_return (llvm_term {{ xor_reduce a }});
+};
+
+// Invariant for XOR reduction
+let xor_inv_spec = do {
+    (pa, a) <- ptr_to_fresh "a" (llvm_array xor_len (llvm_int 32));
+    ppa <- llvm_alloc (llvm_int 64);
+    llvm_points_to ppa pa;
+
+    let n = llvm_term {{ `xor_len : [64] }};
+    pn <- llvm_alloc (llvm_int 64);
+    llvm_points_to pn n;
+
+    (presult, result) <- ptr_to_fresh "result" (llvm_int 32);
+    (pi, i) <- ptr_to_fresh "i" (llvm_int 64);
+
+    llvm_precond {{ i <= `xor_len }};
+
+    llvm_execute_func [ppa, pn, presult, pi];
+
+    // XOR remaining elements
+    llvm_return (llvm_term {{ xor_rest result a i }});
+};
+
+xor_inv <- llvm_unsafe_assume_spec m "__breakpoint__xor_inv#xor_reduce" xor_inv_spec;
+print "  Invariant assumed";
+
+llvm_verify m "__breakpoint__xor_inv#xor_reduce" [xor_inv] false xor_inv_spec z3;
+print "  Invariant preservation verified";
+
+llvm_verify m "xor_reduce" [xor_inv] false xor_spec z3;
+print "  xor_reduce: VERIFIED";
+print "";
+
+// ============================================================
+// Summary
+// ============================================================
+
+print "=============================================================";
+print "ALL EXAMPLES VERIFIED";
+print "=============================================================";
+print "";
+print "Key takeaways:";
+print "  1. ALL live variables must be passed to breakpoint functions";
+print "  2. Use llvm_unsafe_assume_spec for unbounded loops";
+print "  3. Verify invariant preservation with llvm_verify + override";
+print "  4. Compose: use invariant override to verify full function";
+print "  5. For arrays: use ptr_to_fresh for array, llvm_alloc for ptr-to-ptr";
+print "";

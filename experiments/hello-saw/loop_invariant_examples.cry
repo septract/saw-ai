@@ -1,0 +1,134 @@
+/*
+ * Cryptol Specifications for Loop Invariant Examples
+ *
+ * Each example has:
+ *   - Full function spec: what the complete function computes
+ *   - Invariant spec (if needed): what holds at the breakpoint
+ */
+
+module loop_invariant_examples where
+
+// ============================================================
+// Example 1: add2 - no invariant needed, simple breakpoint
+// ============================================================
+
+// No Cryptol spec needed - verified directly in SAW
+
+
+// ============================================================
+// Example 2: count_n - basic counting loop
+// ============================================================
+
+// Full function: count_n n = n
+count_n : [64] -> [64]
+count_n n = n
+
+// Invariant: c + (n - i) = final result
+// Returns what the loop will compute from current state
+count_rest : [64] -> [64] -> [64] -> [64]
+count_rest n c i = c + (n - i)
+
+
+// ============================================================
+// Example 3: sum_array - sum of array elements
+// ============================================================
+
+// Full function: sum all elements
+sum_array : [4][32] -> [32]
+sum_array arr = arr@0 + arr@1 + arr@2 + arr@3
+
+// Invariant: acc + remaining elements starting at index i
+// sum_rest acc arr i = acc + arr[i] + arr[i+1] + ... + arr[3]
+//
+// Key property: sum_rest (acc + arr[i]) arr (i+1) == sum_rest acc arr i
+// This is what SAW checks when verifying invariant preservation.
+sum_rest : [32] -> [4][32] -> [64] -> [32]
+sum_rest acc arr i =
+    if i == 0 then acc + arr@0 + arr@1 + arr@2 + arr@3
+    | i == 1 then acc + arr@1 + arr@2 + arr@3
+    | i == 2 then acc + arr@2 + arr@3
+    | i == 3 then acc + arr@3
+    else acc
+
+
+// ============================================================
+// Example 4: dual_accumulate - two accumulators
+// ============================================================
+
+// Full function: a + n + 2*n = a + 3*n
+dual_accumulate : [64] -> [64] -> [64]
+dual_accumulate a n = a + 3*n
+
+// Invariant: current a + current b + remaining increments
+// After i iterations: a' = a + i, b' = 2*i
+// Remaining: (n-i) for a, 2*(n-i) for b
+// Total: (a + i) + (2*i) + (n-i) + 2*(n-i) = a + 3*n
+dual_rest : [64] -> [64] -> [64] -> [64] -> [64]
+dual_rest a b n i = (a + (n - i)) + (b + 2*(n - i))
+
+
+// ============================================================
+// Example 5: add_fixed_4 - fixed 4 iterations
+// ============================================================
+
+// Full function: x + 40
+add_fixed_4 : [32] -> [32]
+add_fixed_4 x = x + 40
+
+// Invariant: x + 10*(4-i)
+fixed_rest : [32] -> [64] -> [32]
+fixed_rest x i = x + 10 * (drop (4 - i))
+
+
+// ============================================================
+// Example 6: transform_3 - x = x*2 + 1, three times
+// ============================================================
+
+// After 3 iterations: x*8 + 7
+// Derivation:
+//   iter 0: x
+//   iter 1: 2x + 1
+//   iter 2: 2(2x+1) + 1 = 4x + 3
+//   iter 3: 2(4x+3) + 1 = 8x + 7
+
+transform_3 : [32] -> [32]
+transform_3 x = x * 8 + 7
+
+// Apply transform (n-i) more times
+// transform_step applies one iteration
+transform_step : [32] -> [32]
+transform_step x = x * 2 + 1
+
+// After i iterations, we have x' = f^i(x)
+// Remaining iterations: 3 - i
+// We need to express f^(3-i)(x) where f(x) = 2x+1
+// f^0(x) = x
+// f^1(x) = 2x + 1
+// f^2(x) = 4x + 3
+// f^3(x) = 8x + 7
+// General: f^n(x) = x * 2^n + (2^n - 1)
+transform_rest : [32] -> [64] -> [32]
+transform_rest x i =
+    if i == 0 then x * 8 + 7
+    | i == 1 then x * 4 + 3
+    | i == 2 then x * 2 + 1
+    else x
+
+
+// ============================================================
+// Example 7: xor_reduce - XOR reduction
+// ============================================================
+
+// Full function: XOR all elements
+xor_reduce : [4][32] -> [32]
+xor_reduce arr = arr@0 ^ arr@1 ^ arr@2 ^ arr@3
+
+// Invariant: acc XOR remaining elements starting at index i
+// xor_rest acc arr i = acc ^ arr[i] ^ arr[i+1] ^ ... ^ arr[3]
+xor_rest : [32] -> [4][32] -> [64] -> [32]
+xor_rest acc arr i =
+    if i == 0 then acc ^ arr@0 ^ arr@1 ^ arr@2 ^ arr@3
+    | i == 1 then acc ^ arr@1 ^ arr@2 ^ arr@3
+    | i == 2 then acc ^ arr@2 ^ arr@3
+    | i == 3 then acc ^ arr@3
+    else acc
